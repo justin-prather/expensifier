@@ -1,6 +1,6 @@
 # Expensifier
 
-Expensifier is a self-hosted expense intake and review system for Unraid. Phase 1, the application foundation defined in `PROJECT_SPEC.md`, is complete.
+Expensifier is a self-hosted expense intake and review system for Unraid. Phase 2, authentication and authorization as defined in `PROJECT_SPEC.md`, is complete.
 
 ## Current Foundation
 
@@ -19,6 +19,10 @@ Expensifier is a self-hosted expense intake and review system for Unraid. Phase 
 - Privacy-safe JSON operational logs containing IDs and statuses, not document or financial data.
 - Separate liveness and readiness endpoints with database, runtime, and storage checks.
 - Signal-driven Effect runtime disposal for clean container shutdown.
+- Better Auth admin and accountant roles backed by server-side permission checks.
+- Admin-created, SHA-256-hashed invitation tokens that expire after 72 hours and work once.
+- User, role, and invitation administration at `/settings/users`.
+- Invitation acceptance with account creation and immediate authenticated access.
 
 `Legacy/` remains ignored reference material and is not part of the application build.
 
@@ -42,6 +46,8 @@ bun run dev
 ```
 
 Open `http://localhost:5173`. The first visit redirects to `/setup`; after the first account is created, public registration is unavailable.
+
+Admins manage users and create invitation links at `/settings/users`. Invitation links are displayed once for manual sharing; no SMTP configuration is required. Accountants can review expenses and retry OCR but cannot access user or system settings.
 
 Local SQLite files are created under `./data/app/` and are ignored by Git.
 

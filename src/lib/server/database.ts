@@ -19,6 +19,25 @@ const migrations = SqliteMigrator.fromRecord({
 			)
 		`;
 		yield* sql`CREATE INDEX jobs_status_created_at ON jobs (status, created_at)`;
+	}),
+	'0002_create_invitations': Effect.gen(function* () {
+		const sql = yield* SqlClient.SqlClient;
+		yield* sql`
+			CREATE TABLE invitations (
+				id TEXT PRIMARY KEY,
+				email TEXT NOT NULL,
+				role TEXT NOT NULL CHECK (role IN ('admin', 'accountant')),
+				token_hash TEXT NOT NULL UNIQUE,
+				invited_by_user_id TEXT NOT NULL,
+				expires_at TEXT NOT NULL,
+				accepted_at TEXT,
+				accepted_by_user_id TEXT,
+				revoked_at TEXT,
+				created_at TEXT NOT NULL
+			)
+		`;
+		yield* sql`CREATE INDEX invitations_email_created_at ON invitations (email, created_at)`;
+		yield* sql`CREATE INDEX invitations_status_expires_at ON invitations (accepted_at, revoked_at, expires_at)`;
 	})
 });
 

@@ -2,7 +2,7 @@ services:
   expensifier:
     build:
       context: .
-    image: expensifier:phase-one
+    image: expensifier:phase-two
     container_name: expensifier
     restart: unless-stopped
     ports:

@@ -1,7 +1,8 @@
 import { auth, hasUsers } from '$lib/server/auth';
+import { requirePermission } from '$lib/server/authorization';
 import { Job, JobService } from '$lib/server/jobs';
 import { appRuntime } from '$lib/server/runtime';
-import { fail, redirect } from '@sveltejs/kit';
+import { redirect } from '@sveltejs/kit';
 import { Schema } from 'effect';
 
 import type { Actions, PageServerLoad } from './$types';
@@ -22,9 +23,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 
 export const actions: Actions = {
 	'run-ocr': async ({ locals }) => {
-		if (!locals.user) {
-			return fail(401, { message: 'Authentication required' });
-		}
+		requirePermission(locals.user, 'expenses:retry-ocr');
 
 		await appRuntime.runPromise(JobService.use((service) => service.enqueueFakeOcr));
 		return { message: 'Fake OCR job completed' };

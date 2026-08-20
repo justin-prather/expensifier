@@ -4,8 +4,10 @@ import { getRequestEvent } from '$app/server';
 import { betterAuth } from 'better-auth';
 import { APIError } from 'better-auth/api';
 import { getMigrations } from 'better-auth/db/migration';
+import { admin } from 'better-auth/plugins';
 import { sveltekitCookies } from 'better-auth/svelte-kit';
 
+import { accountantRole, adminRole, authAccessControl } from './authorization';
 import {
 	authDatabasePath,
 	betterAuthSecret,
@@ -30,21 +32,12 @@ export const auth = betterAuth({
 		minPasswordLength: 8,
 		revokeSessionsOnPasswordReset: true
 	},
-	user: {
-		additionalFields: {
-			role: {
-				type: ['admin', 'accountant'],
-				required: true,
-				defaultValue: 'accountant',
-				input: false
-			}
-		}
-	},
 	databaseHooks: {
 		user: {
 			create: {
-				before: async (user) => {
+				before: async (user, context) => {
 					if (hasUsers()) {
+						if (context?.path === '/admin/create-user' && !context.request) return;
 						throw new APIError('FORBIDDEN', {
 							message: 'Public registration is disabled'
 						});
@@ -66,7 +59,15 @@ export const auth = betterAuth({
 	telemetry: {
 		enabled: false
 	},
-	plugins: [sveltekitCookies(getRequestEvent)]
+	plugins: [
+		admin({
+			defaultRole: 'accountant',
+			adminRoles: ['admin'],
+			ac: authAccessControl,
+			roles: { admin: adminRole, accountant: accountantRole }
+		}),
+		sveltekitCookies(getRequestEvent)
+	]
 });
 
 export async function migrateAuthDatabase(): Promise<void> {

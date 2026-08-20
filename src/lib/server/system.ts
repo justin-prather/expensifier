@@ -1,8 +1,20 @@
 import { Context, Effect, Layer, Ref } from 'effect';
 
 import { ensureManagedDirectories, managedDirectoriesAreWritable } from './config';
-import { JobService } from './jobs';
+import { DatabaseLive } from './database';
+import { InvitationService } from './invitations';
+import { JobRepository, JobService } from './jobs';
 import { logOperationalEvent } from './logger';
+import { OcrService } from './ocr';
+
+const PersistenceLive = Layer.merge(
+	JobRepository.layerWithoutDependencies,
+	InvitationService.layerWithoutDependencies
+).pipe(Layer.provide(DatabaseLive));
+
+const ApplicationServicesLive = JobService.layerWithoutDependencies.pipe(
+	Layer.provideMerge(Layer.merge(PersistenceLive, OcrService.fakeLayer))
+);
 
 export interface ReadinessReport {
 	readonly status: 'ready' | 'unavailable';
@@ -55,5 +67,7 @@ export class SystemService extends Context.Service<
 		})
 	);
 
-	static readonly layer = this.layerWithoutDependencies.pipe(Layer.provideMerge(JobService.layer));
+	static readonly layer = this.layerWithoutDependencies.pipe(
+		Layer.provideMerge(ApplicationServicesLive)
+	);
 }

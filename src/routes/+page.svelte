@@ -13,7 +13,7 @@
 
 <svelte:head>
 	<title>Processing Lab | Expensifier</title>
-	<meta name="description" content="The Expensifier Phase 1 application foundation." />
+	<meta name="description" content="The Expensifier Phase 2 access-control foundation." />
 </svelte:head>
 
 <main class="mx-auto min-h-screen max-w-6xl px-5 py-6 sm:px-8 sm:py-10">
@@ -22,7 +22,7 @@
 	>
 		<div>
 			<p class="font-mono text-xs font-bold tracking-[0.24em] text-forest uppercase">
-				Phase 01 / Foundation
+				Phase 02 / Access Control
 			</p>
 			<h1 class="mt-2 text-4xl font-semibold tracking-[-0.045em] sm:text-6xl">
 				Expense machinery,<br />under observation.
@@ -33,6 +33,13 @@
 				<p class="text-sm font-semibold">{data.user.name}</p>
 				<p class="font-mono text-xs text-ink/60">{data.user.role}</p>
 			</div>
+			{#if data.user.role === 'admin'}
+				<a
+					href="/settings/users"
+					class="border border-ink/30 px-3 py-1.5 text-xs font-bold tracking-wide uppercase hover:bg-forest hover:text-paper"
+					>Users</a
+				>
+			{/if}
 			<form method="POST" action="?/sign-out">
 				<button
 					class="border border-ink/30 px-3 py-1.5 text-xs font-bold tracking-wide uppercase hover:bg-ink hover:text-paper"
@@ -88,10 +95,10 @@
 		<aside class="flex flex-col justify-between bg-forest p-6 text-white sm:p-8">
 			<div>
 				<p class="font-mono text-xs font-bold tracking-[0.2em] text-white/60 uppercase">
-					Foundation status
+					Access status
 				</p>
 				<h2 class="mt-4 text-3xl font-semibold tracking-tight">
-					The application shell is ready for the workflow.
+					Known people, explicit permissions.
 				</h2>
 				<ul class="mt-7 space-y-3 text-sm text-white/75">
 					<li class="border-t border-white/20 pt-3">Effect v4 ManagedRuntime</li>
@@ -99,6 +106,7 @@
 					<li class="border-t border-white/20 pt-3">Replaceable OcrService Layer</li>
 					<li class="border-t border-white/20 pt-3">Better Auth protected route</li>
 					<li class="border-t border-white/20 pt-3">Validated managed storage and readiness</li>
+					<li class="border-t border-white/20 pt-3">Expiring one-time invitation links</li>
 				</ul>
 			</div>
 
