@@ -1,0 +1,27 @@
+{
+	"$schema": "./node_modules/oxlint/configuration_schema.json",
+	"categories": {
+		"correctness": "error",
+		"perf": "error",
+		"suspicious": "error"
+	},
+	"env": {
+		"browser": true,
+		"node": true,
+		"svelte": true,
+		"vitest": true
+	},
+	"ignorePatterns": [".svelte-kit/**", "build/**", "Legacy/**", "node_modules/**"],
+	"options": {
+		"reportUnusedDisableDirectives": "error"
+	},
+	"overrides": [
+		{
+			"files": ["**/*.spec.ts"],
+			"rules": {
+				"vitest/no-standalone-expect": "off"
+			}
+		}
+	],
+	"plugins": ["oxc", "typescript", "unicorn", "vitest"]
+}

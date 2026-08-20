@@ -1,0 +1,16 @@
+services:
+  expensifier:
+    build:
+      context: .
+    image: expensifier:phase-one
+    container_name: expensifier
+    restart: unless-stopped
+    ports:
+      - '3000:3000'
+    environment:
+      APP_DATA_ROOT: /data
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?Set BETTER_AUTH_SECRET in .env}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
+      ORIGIN: ${ORIGIN:-http://localhost:3000}
+    volumes:
+      - ${DOCKER_DATA_ROOT:-./data}:/data

@@ -1,0 +1,41 @@
+{
+	"name": "expensifier",
+	"version": "0.0.1",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "bun --bun vite dev",
+		"build": "bun --bun vite build",
+		"start": "bun build/index.js",
+		"preview": "bun --bun vite preview",
+		"prepare": "svelte-kit sync || echo ''",
+		"check": "svelte-kit sync && svelte-check --config ./vite.config.ts --tsconfig ./tsconfig.json",
+		"check:watch": "svelte-kit sync && svelte-check --config ./vite.config.ts --tsconfig ./tsconfig.json --watch",
+		"test:unit": "bun --bun node_modules/vitest/vitest.mjs",
+		"test": "bun run test:unit -- --run",
+		"lint": "oxfmt --check . && oxlint --deny-warnings .",
+		"format": "oxfmt --write ."
+	},
+	"dependencies": {
+		"@effect/sql-sqlite-bun": "4.0.0-rc.111",
+		"better-auth": "1.7.1",
+		"effect": "4.0.0-rc.111"
+	},
+	"devDependencies": {
+		"@effect/vitest": "4.0.0-rc.111",
+		"@sveltejs/kit": "^2.63.0",
+		"@sveltejs/vite-plugin-svelte": "^7.1.2",
+		"@tailwindcss/vite": "^4.3.0",
+		"@types/bun": "1.3.14",
+		"@types/node": "^24",
+		"oxfmt": "^0.64.0",
+		"oxlint": "^1.79.0",
+		"svelte": "^5.56.1",
+		"svelte-adapter-bun": "1.0.1",
+		"svelte-check": "^4.6.0",
+		"tailwindcss": "^4.3.0",
+		"typescript": "^6.0.3",
+		"vite": "^8.0.16",
+		"vitest": "^4.1.8"
+	}
+}
