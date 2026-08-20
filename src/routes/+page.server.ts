@@ -1,9 +1,11 @@
 import { auth, hasUsers } from '$lib/server/auth';
 import { requirePermission } from '$lib/server/authorization';
-import { Job, JobService } from '$lib/server/jobs';
+import { DocumentRepository, QueueItem } from '$lib/server/documents';
+import { IntakeService } from '$lib/server/intake';
+import { JobService } from '$lib/server/jobs';
 import { appRuntime } from '$lib/server/runtime';
 import { redirect } from '@sveltejs/kit';
-import { Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 
 import type { Actions, PageServerLoad } from './$types';
 
@@ -11,22 +13,31 @@ export const load: PageServerLoad = async ({ locals }) => {
 	if (!locals.user) {
 		redirect(303, hasUsers() ? '/login' : '/setup');
 	}
+	requirePermission(locals.user, 'expenses:view');
 
-	const jobs = await appRuntime.runPromise(JobService.use((service) => service.list));
-	const encodeJob = Schema.encodeSync(Job);
+	const queue = await appRuntime.runPromise(
+		DocumentRepository.use((repository) => repository.queue)
+	);
+	const encodeQueueItem = Schema.encodeSync(QueueItem);
 
 	return {
-		jobs: jobs.map((job) => encodeJob(job)),
+		queue: queue.map((item) => encodeQueueItem(item)),
 		user: locals.user
 	};
 };
 
 export const actions: Actions = {
-	'run-ocr': async ({ locals }) => {
+	'reconcile-inbox': async ({ locals }) => {
 		requirePermission(locals.user, 'expenses:retry-ocr');
-
-		await appRuntime.runPromise(JobService.use((service) => service.enqueueFakeOcr));
-		return { message: 'Fake OCR job completed' };
+		await appRuntime.runPromise(
+			Effect.gen(function* () {
+				const intake = yield* IntakeService;
+				const jobs = yield* JobService;
+				yield* intake.reconcile;
+				yield* jobs.processAvailable;
+			})
+		);
+		return { message: 'Inbox reconciliation requested' };
 	},
 	'sign-out': async ({ request }) => {
 		await auth.api.signOut({ headers: request.headers });

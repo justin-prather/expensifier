@@ -17,6 +17,10 @@ export interface RuntimeConfig {
 	readonly authDatabasePath: string;
 	readonly betterAuthUrl: string;
 	readonly betterAuthSecret: string;
+	readonly intakeStableMilliseconds: number;
+	readonly intakeScanIntervalMilliseconds: number;
+	readonly jobPollIntervalMilliseconds: number;
+	readonly jobMaxAttempts: number;
 }
 
 function isWithin(root: string, candidate: string): boolean {
@@ -50,6 +54,19 @@ function validHttpUrl(value: string, name: string): string {
 	}
 
 	return url.toString().replace(/\/$/, '');
+}
+
+function integerSetting(
+	value: string | undefined,
+	fallback: number,
+	name: string,
+	minimum: number
+): number {
+	const parsed = value === undefined ? fallback : Number(value);
+	if (!Number.isInteger(parsed) || parsed < minimum) {
+		throw new Error(`${name} must be an integer greater than or equal to ${minimum}`);
+	}
+	return parsed;
 }
 
 function parseRuntimeConfig(
@@ -120,7 +137,26 @@ function parseRuntimeConfig(
 			environment.BETTER_AUTH_URL ?? 'http://localhost:5173',
 			'BETTER_AUTH_URL'
 		),
-		betterAuthSecret
+		betterAuthSecret,
+		intakeStableMilliseconds: integerSetting(
+			environment.INTAKE_STABLE_MILLISECONDS,
+			2000,
+			'INTAKE_STABLE_MILLISECONDS',
+			0
+		),
+		intakeScanIntervalMilliseconds: integerSetting(
+			environment.INTAKE_SCAN_INTERVAL_MILLISECONDS,
+			10_000,
+			'INTAKE_SCAN_INTERVAL_MILLISECONDS',
+			250
+		),
+		jobPollIntervalMilliseconds: integerSetting(
+			environment.JOB_POLL_INTERVAL_MILLISECONDS,
+			500,
+			'JOB_POLL_INTERVAL_MILLISECONDS',
+			100
+		),
+		jobMaxAttempts: integerSetting(environment.JOB_MAX_ATTEMPTS, 3, 'JOB_MAX_ATTEMPTS', 1)
 	};
 }
 

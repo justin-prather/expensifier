@@ -1,6 +1,6 @@
 # Expensifier
 
-Expensifier is a self-hosted expense intake and review system for Unraid. Phase 2, authentication and authorization as defined in `PROJECT_SPEC.md`, is complete.
+Expensifier is a self-hosted expense intake and review system for Unraid. Phase 3, durable watched-folder intake as defined in `PROJECT_SPEC.md`, is complete.
 
 ## Current Foundation
 
@@ -23,6 +23,11 @@ Expensifier is a self-hosted expense intake and review system for Unraid. Phase 
 - Admin-created, SHA-256-hashed invitation tokens that expire after 72 hours and work once.
 - User, role, and invitation administration at `/settings/users`.
 - Invitation acceptance with account creation and immediate authenticated access.
+- Recursive PDF, JPEG, and PNG inbox discovery using filesystem events plus periodic reconciliation.
+- Stable-file checks, signature validation, SHA-256 hashing, and content-based duplicate relationships.
+- Database-first intake staging followed by recoverable atomic moves into the processing directory.
+- Durable job claims with bounded backoff, sanitized failures, and interrupted-work recovery.
+- Authenticated intake queue showing move, duplicate, failure, and awaiting-OCR states.
 
 `Legacy/` remains ignored reference material and is not part of the application build.
 
@@ -97,6 +102,18 @@ data/
 Better Auth and the expense domain intentionally use separate SQLite databases. Authentication remains at the web boundary; domain records use stable Better Auth user IDs when user ownership is introduced.
 
 Managed folder overrides are relative to `APP_DATA_ROOT`; startup rejects absolute paths and traversal outside that root. See `.env.example` for the supported variables.
+
+## Watched-Folder Intake
+
+Place supported PDF, JPG, JPEG, or PNG files beneath `data/inbox/`. A file must retain the same size and modification time for the configured stability interval before intake. The application then:
+
+1. Validates the extension and file signature.
+2. Calculates a SHA-256 content hash.
+3. Creates the document and durable job records transactionally.
+4. Flags an existing matching hash without deleting either document.
+5. Atomically moves the file to a document-ID-based path beneath `data/processing/`.
+
+Filesystem events reduce latency, while periodic scans remain the source of truth. Interrupted running jobs return to the pending queue at startup. See `.env.example` for stability, scan, polling, and retry settings.
 
 ## Effect Version
 
