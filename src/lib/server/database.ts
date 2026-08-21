@@ -270,6 +270,52 @@ const migrations = SqliteMigrator.fromRecord({
 			)
 		`;
 		yield* sql`CREATE INDEX vendor_rules_active_alias ON vendor_rules (active, alias)`;
+	}),
+	'0007_create_classification': Effect.gen(function* () {
+		const sql = yield* SqlClient.SqlClient;
+		yield* sql`
+			CREATE TABLE classification_runs (
+				id TEXT PRIMARY KEY,
+				expense_id TEXT NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
+				job_id TEXT NOT NULL REFERENCES jobs(id),
+				provider TEXT NOT NULL,
+				model TEXT NOT NULL,
+				status TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed')),
+				input_json TEXT NOT NULL,
+				output_json TEXT,
+				error_code TEXT,
+				error_summary TEXT,
+				started_at TEXT NOT NULL,
+				completed_at TEXT
+			)
+		`;
+		yield* sql`CREATE INDEX classification_runs_expense_started ON classification_runs (expense_id, started_at)`;
+		yield* sql`
+			CREATE TABLE classification_suggestions (
+				id TEXT PRIMARY KEY,
+				run_id TEXT NOT NULL UNIQUE REFERENCES classification_runs(id) ON DELETE CASCADE,
+				expense_id TEXT NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
+				payment_account_id TEXT REFERENCES payment_accounts(id),
+				category_id TEXT REFERENCES expense_categories(id),
+				client_id TEXT REFERENCES clients(id),
+				billable INTEGER CHECK (billable IN (0, 1)),
+				rationale TEXT NOT NULL,
+				confidence REAL,
+				outcome TEXT NOT NULL DEFAULT 'pending'
+					CHECK (outcome IN ('pending', 'accepted', 'rejected', 'replaced')),
+				reviewed_by TEXT,
+				reviewed_at TEXT,
+				created_at TEXT NOT NULL,
+				updated_at TEXT NOT NULL
+			)
+		`;
+		yield* sql`CREATE INDEX classification_suggestions_expense_created ON classification_suggestions (expense_id, created_at)`;
+		yield* sql`
+			CREATE UNIQUE INDEX jobs_active_classification_entity
+			ON jobs (related_entity_id, type)
+			WHERE related_entity_id IS NOT NULL AND type = 'classify_expense'
+				AND status IN ('pending', 'running')
+		`;
 	})
 });
 

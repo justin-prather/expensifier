@@ -2,6 +2,8 @@ import { Context, Effect, Layer, Ref } from 'effect';
 
 import { ApprovalIntegrationService } from './approval-integration';
 import { AuditRepository } from './audit';
+import { ClassificationService } from './classification';
+import { ClassificationRepository } from './classification-repository';
 import { ensureManagedDirectories, managedDirectoriesAreWritable } from './config';
 import { DatabaseLive } from './database';
 import { DocumentRepository } from './documents';
@@ -18,7 +20,7 @@ import { ReviewService } from './review';
 import { VendorRuleService } from './rules';
 import { TemplateService } from './templates';
 
-const PersistenceLive = Layer.mergeAll(
+const CorePersistenceLive = Layer.mergeAll(
 	JobRepository.layerWithoutDependencies,
 	InvitationService.layerWithoutDependencies,
 	DocumentRepository.layerWithoutDependencies,
@@ -28,6 +30,12 @@ const PersistenceLive = Layer.mergeAll(
 	TemplateService.layerWithoutDependencies
 ).pipe(Layer.provideMerge(DatabaseLive));
 
+const ClassificationPersistenceLive = ClassificationRepository.layerWithoutDependencies.pipe(
+	Layer.provideMerge(CorePersistenceLive)
+);
+
+const PersistenceLive = Layer.merge(CorePersistenceLive, ClassificationPersistenceLive);
+
 const AdminServicesLive = Layer.merge(
 	ReferenceService.layerWithoutDependencies,
 	VendorRuleService.layerWithoutDependencies
@@ -35,7 +43,10 @@ const AdminServicesLive = Layer.merge(
 
 const ServiceDependenciesLive = Layer.merge(
 	Layer.merge(Layer.merge(PersistenceLive, OcrService.taggunLayer), FileLifecycleService.layer),
-	Layer.merge(ApprovalIntegrationService.layer, AdminServicesLive)
+	Layer.merge(
+		Layer.merge(ApprovalIntegrationService.layer, ClassificationService.openAiLayer),
+		AdminServicesLive
+	)
 );
 
 const ApplicationServicesLive = Layer.merge(
@@ -66,7 +77,6 @@ export class SystemService extends Context.Service<
 		Effect.gen(function* () {
 			const jobs = yield* JobService;
 			const intake = yield* IntakeService;
-			const expenses = yield* ExpenseRepository;
 			const review = yield* ReviewService;
 			const started = yield* Ref.make(false);
 
@@ -75,7 +85,6 @@ export class SystemService extends Context.Service<
 				yield* intake.start;
 				yield* jobs.recoverAndProcess;
 				yield* review.recoverInterrupted;
-				yield* expenses.reconcileSettled;
 				yield* jobs.start;
 				yield* Ref.set(started, true);
 				logOperationalEvent('info', 'application_started', {

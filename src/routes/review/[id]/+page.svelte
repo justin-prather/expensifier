@@ -43,6 +43,8 @@
 	let rejectReason = $state('');
 	let preview = $state({ filename: data.preview.filename, destination: data.preview.destination });
 	let refreshingPreview = $state(false);
+	let dismissedAiSuggestionId = $state<string | null>(null);
+	let appliedAiSuggestionId = $state<string | null>(null);
 
 	function emptyLineItem(): LineItemRow {
 		return {
@@ -68,7 +70,8 @@
 			clientId,
 			paymentAccountId,
 			lineItems,
-			taxComponents
+			taxComponents,
+			classificationSuggestionId: appliedAiSuggestionId
 		})
 	);
 
@@ -163,6 +166,52 @@
 		}
 		dismissedSuggestionId = suggestion.ruleId;
 		notice = `Rule suggestion applied from alias "${suggestion.alias}". Review every field before approving.`;
+	}
+
+	const aiSuggestion = $derived(
+		data.classification.suggestion?.outcome === 'pending' &&
+			data.classification.suggestion.id !== dismissedAiSuggestionId
+			? data.classification.suggestion
+			: null
+	);
+
+	async function rejectSuggestion(suggestionId: string) {
+		const body = new FormData();
+		body.set('suggestionId', suggestionId);
+		const response = await fetch('?/suggestion-outcome', { method: 'POST', body });
+		const result = deserialize(await response.text());
+		if (result.type !== 'success') {
+			notice =
+				result.type === 'failure' && typeof result.data?.message === 'string'
+					? result.data.message
+					: 'Unable to record suggestion outcome';
+			return false;
+		}
+		return true;
+	}
+
+	async function applyAiSuggestion() {
+		if (!aiSuggestion) return;
+		const selected = aiSuggestion;
+		if (selected.paymentAccountId) paymentAccountId = selected.paymentAccountId;
+		if (selected.clientId) clientId = selected.clientId;
+		if (selected.billable !== null) billable = selected.billable;
+		if (selected.categoryId) {
+			lineItems = lineItems.map((row) =>
+				row.categoryId === '' ? { ...row, categoryId: selected.categoryId! } : row
+			);
+		}
+		dismissedAiSuggestionId = selected.id;
+		appliedAiSuggestionId = selected.id;
+		notice = 'AI suggestion applied. Review every field before approving.';
+	}
+
+	async function dismissAiSuggestion() {
+		if (!aiSuggestion) return;
+		if (await rejectSuggestion(aiSuggestion.id)) {
+			dismissedAiSuggestionId = aiSuggestion.id;
+			notice = 'AI suggestion dismissed.';
+		}
 	}
 
 	function markLineItemManual(index: number) {
@@ -360,6 +409,56 @@
 							>
 						</div>
 					</div>
+				</div>
+			{/if}
+			{#if aiSuggestion}
+				<div class="border-2 border-dashed border-forest bg-emerald-50/70 p-4">
+					<div class="flex flex-wrap items-start justify-between gap-3">
+						<div class="max-w-xl">
+							<p class="font-mono text-[11px] font-bold text-forest uppercase">
+								AI suggestion · {aiSuggestion.provider} / {aiSuggestion.model}
+								{#if aiSuggestion.confidence !== null}
+									· {Math.round(aiSuggestion.confidence * 100)}% confidence
+								{/if}
+							</p>
+							<p class="mt-2 text-sm leading-6">{aiSuggestion.rationale}</p>
+							<p class="mt-2 font-mono text-xs text-ink/65 uppercase">
+								{aiSuggestion.paymentAccountName ?? 'No payment account'} ·
+								{aiSuggestion.categoryName ?? 'No category'} ·
+								{aiSuggestion.clientName ?? 'No client'} ·
+								{aiSuggestion.billable === null
+									? 'Billable unknown'
+									: aiSuggestion.billable
+										? 'Billable'
+										: 'Not billable'}
+							</p>
+						</div>
+						<div class="flex gap-2">
+							<button
+								type="button"
+								class="border border-forest bg-forest px-3 py-1.5 font-mono text-xs font-bold text-paper uppercase hover:opacity-80"
+								onclick={applyAiSuggestion}>Apply suggestion</button
+							>
+							<button
+								type="button"
+								class="border border-forest px-3 py-1.5 font-mono text-xs font-bold uppercase hover:bg-forest hover:text-paper"
+								onclick={dismissAiSuggestion}>Dismiss</button
+							>
+						</div>
+					</div>
+				</div>
+			{:else if !suggestion && data.classification.run?.status === 'failed'}
+				<div class="border-2 border-dashed border-coral bg-rose-50/70 p-4">
+					<p class="font-mono text-[11px] font-bold text-coral uppercase">
+						AI classification unavailable
+					</p>
+					<p class="mt-2 text-sm">{data.classification.run.errorSummary}</p>
+					<form method="POST" action="?/retry-classification" class="mt-3">
+						<button
+							class="border border-ink px-3 py-1.5 font-mono text-xs font-bold uppercase hover:bg-ink hover:text-paper"
+							>Retry classification</button
+						>
+					</form>
 				</div>
 			{/if}
 			<div class="border-2 border-ink bg-white/40 p-5">
@@ -767,6 +866,7 @@
 						return async ({ result, update }) => {
 							await update({ reset: false });
 							if (result.type === 'success') {
+								appliedAiSuggestionId = null;
 								if ((result.data as { approved?: boolean })?.approved) {
 									await goto('/');
 									return;

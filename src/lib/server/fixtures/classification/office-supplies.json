@@ -1,0 +1,20 @@
+{
+	"ocr": {
+		"merchantName": { "value": "Fixture Stationery", "confidence": 0.94 },
+		"transactionDate": { "value": "2026-07-14", "confidence": 0.91 },
+		"totalAmount": { "value": "28.40", "confidence": 0.99 },
+		"taxAmount": { "value": "3.27", "confidence": 0.88 },
+		"currencyCode": { "value": "CAD", "confidence": 0.96 },
+		"lineItems": [
+			{
+				"description": { "value": "Notebooks and pens", "confidence": 0.86 },
+				"quantity": { "value": "1", "confidence": 0.8 },
+				"unitPrice": { "value": "25.13", "confidence": 0.82 },
+				"netAmount": { "value": "25.13", "confidence": 0.9 },
+				"taxAmount": { "value": "3.27", "confidence": 0.88 },
+				"grossAmount": { "value": "28.40", "confidence": 0.94 }
+			}
+		]
+	},
+	"expected": { "categoryName": "Office Supplies", "billable": false }
+}

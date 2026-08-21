@@ -9,9 +9,15 @@ import { FileLifecycleService } from './files';
 import { logOperationalEvent } from './logger';
 import { OcrService } from './ocr';
 import { OcrRunRepository } from './ocr-runs';
+import { VendorRuleService } from './rules';
 
 const JobStatus = Schema.Literals(['pending', 'running', 'succeeded', 'failed']);
-const JobType = Schema.Literals(['fake_ocr', 'intake_document', 'ocr_document']);
+const JobType = Schema.Literals([
+	'fake_ocr',
+	'intake_document',
+	'ocr_document',
+	'classify_expense'
+]);
 
 export class Job extends Schema.Class<Job>('Job')({
 	id: Schema.String,
@@ -43,6 +49,8 @@ export class JobRepository extends Context.Service<
 	{
 		readonly createFakeOcr: Effect.Effect<Job>;
 		readonly createOcr: (documentId: string) => Effect.Effect<Job>;
+		readonly createClassification: (expenseId: string) => Effect.Effect<Job>;
+		readonly enqueueMissingClassifications: Effect.Effect<void>;
 		readonly list: Effect.Effect<ReadonlyArray<Job>>;
 		readonly claimNext: Effect.Effect<Job | null>;
 		readonly complete: (id: string, resultJson?: string) => Effect.Effect<Job>;
@@ -102,6 +110,60 @@ export class JobRepository extends Context.Service<
 					})
 				);
 			}, Effect.orDie);
+
+			const createClassification = Effect.fn('JobRepository.createClassification')(function* (
+				expenseId: string
+			) {
+				return yield* sql.withTransaction(
+					Effect.gen(function* () {
+						const active = yield* sql<{ readonly id: string }>`
+							SELECT id FROM jobs WHERE related_entity_id = ${expenseId}
+								AND type = 'classify_expense' AND status IN ('pending', 'running') LIMIT 1
+						`;
+						if (active[0]) return yield* findById(active[0].id);
+						const now = new Date().toISOString();
+						const id = crypto.randomUUID();
+						yield* sql`
+							INSERT INTO jobs (
+								id, type, status, related_entity_id, attempt_count, max_attempts,
+								next_attempt_at, created_at, updated_at
+							) VALUES (
+								${id}, 'classify_expense', 'pending', ${expenseId}, 0,
+								${runtimeConfig.jobMaxAttempts}, ${now}, ${now}, ${now}
+							)
+						`;
+						return yield* findById(id);
+					})
+				);
+			}, Effect.orDie);
+
+			const enqueueMissingClassifications = Effect.gen(function* () {
+				const now = new Date().toISOString();
+				const expenses = yield* sql<{ readonly id: string }>`
+					SELECT e.id FROM expenses e
+					WHERE e.status = 'needs_review'
+						AND EXISTS (
+							SELECT 1 FROM ocr_runs o
+							JOIN documents d ON d.id = o.document_id
+							WHERE d.id = e.document_id AND o.status = 'succeeded'
+						)
+						AND NOT EXISTS (
+							SELECT 1 FROM jobs j
+							WHERE j.related_entity_id = e.id AND j.type = 'classify_expense'
+						)
+				`;
+				for (const expense of expenses) {
+					yield* sql`
+						INSERT INTO jobs (
+							id, type, status, related_entity_id, attempt_count, max_attempts,
+							next_attempt_at, created_at, updated_at
+						) VALUES (
+							${crypto.randomUUID()}, 'classify_expense', 'pending', ${expense.id}, 0,
+							${runtimeConfig.jobMaxAttempts}, ${now}, ${now}, ${now}
+						)
+					`;
+				}
+			}).pipe(Effect.orDie);
 
 			const list = sql<Job>`
 				SELECT ${sql.unsafe(jobColumns)} FROM jobs ORDER BY created_at DESC
@@ -168,18 +230,21 @@ export class JobRepository extends Context.Service<
 					UPDATE jobs SET status = 'pending', error_code = 'interrupted',
 						error_summary = 'Work was interrupted and will resume', next_attempt_at = ${now},
 						updated_at = ${now}
-					WHERE status = 'running' AND type != 'ocr_document' AND attempt_count < max_attempts
+					WHERE status = 'running' AND type NOT IN ('ocr_document', 'classify_expense')
+						AND attempt_count < max_attempts
 				`;
 				yield* sql`
 					UPDATE jobs SET status = 'failed',
-						error_code = CASE WHEN type = 'ocr_document' THEN 'outcome_unknown' ELSE 'interrupted' END,
+							error_code = CASE WHEN type IN ('ocr_document', 'classify_expense') THEN 'outcome_unknown' ELSE 'interrupted' END,
 						error_summary = CASE
-							WHEN type = 'ocr_document' THEN 'OCR was interrupted with an unknown provider outcome'
+								WHEN type = 'ocr_document' THEN 'OCR was interrupted with an unknown provider outcome'
+								WHEN type = 'classify_expense' THEN 'Classification was interrupted with an unknown provider outcome'
 							ELSE 'Work was interrupted at the attempt limit'
 						END,
 						next_attempt_at = NULL,
 						completed_at = ${now}, updated_at = ${now}
-					WHERE status = 'running' AND (type = 'ocr_document' OR attempt_count >= max_attempts)
+					WHERE status = 'running'
+						AND (type IN ('ocr_document', 'classify_expense') OR attempt_count >= max_attempts)
 				`;
 			}).pipe(Effect.orDie, Effect.withSpan('JobRepository.recoverInterrupted'));
 
@@ -191,6 +256,8 @@ export class JobRepository extends Context.Service<
 			return JobRepository.of({
 				createFakeOcr,
 				createOcr,
+				createClassification,
+				enqueueMissingClassifications,
 				list,
 				claimNext,
 				complete,
@@ -210,6 +277,7 @@ export class JobService extends Context.Service<
 		readonly start: Effect.Effect<void>;
 		readonly enqueueFakeOcr: Effect.Effect<Job>;
 		readonly retryOcr: (documentId: string) => Effect.Effect<Job>;
+		readonly retryClassification: (expenseId: string) => Effect.Effect<Job>;
 		readonly recoverAndProcess: Effect.Effect<void>;
 		readonly processAvailable: Effect.Effect<void>;
 		readonly list: Effect.Effect<ReadonlyArray<Job>>;
@@ -225,6 +293,10 @@ export class JobService extends Context.Service<
 			const ocr = yield* OcrService;
 			const ocrRuns = yield* OcrRunRepository;
 			const expenses = yield* ExpenseRepository;
+			const rules = yield* VendorRuleService;
+			const classifier = yield* ClassificationService;
+			const classifications = yield* ClassificationRepository;
+			const sql = yield* SqlClient.SqlClient;
 			let timer: ReturnType<typeof setInterval> | undefined;
 			let processing = false;
 
@@ -323,6 +395,106 @@ export class JobService extends Context.Service<
 					const normalizedJson = JSON.stringify(outcome.success.normalized);
 					yield* ocrRuns.succeed(run.id, job.id, outcome.success.rawResponseJson, normalizedJson);
 					yield* expenses.reconcileSettled;
+					const expense = yield* expenses.findByDocumentId(document.id);
+					if (expense) yield* jobs.createClassification(expense.id);
+				} else if (job.type === 'classify_expense') {
+					const expense = job.relatedEntityId
+						? yield* expenses.findById(job.relatedEntityId)
+						: null;
+					if (!expense) {
+						yield* jobs.fail(job, 'expense_missing', 'Related expense was not found', false);
+						return;
+					}
+					if (expense.status !== 'needs_review') {
+						yield* jobs.complete(job.id, JSON.stringify({ skipped: 'expense_finalized' }));
+						return;
+					}
+					const runs = yield* ocrRuns.listForDocument(expense.documentId);
+					const latest = runs
+						.filter((run) => run.status === 'succeeded' && run.normalizedResultJson)
+						.toSorted((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
+					if (!latest?.normalizedResultJson) {
+						yield* jobs.fail(job, 'ocr_missing', 'Structured OCR data was not found', false);
+						return;
+					}
+					let normalized: unknown;
+					try {
+						normalized = JSON.parse(latest.normalizedResultJson);
+					} catch {
+						yield* jobs.fail(job, 'ocr_invalid', 'Structured OCR data was invalid', false);
+						return;
+					}
+					const structuredOcr = projectStructuredOcr(normalized);
+					const rule = yield* rules.suggestForVendor(structuredOcr.merchantName.value);
+					if (rule) {
+						yield* jobs.complete(job.id, JSON.stringify({ skipped: 'deterministic_rule' }));
+						return;
+					}
+					const refs = yield* expenses.referenceData;
+					const request: ClassificationRequest = {
+						ocr: structuredOcr,
+						choices: {
+							paymentAccounts: refs.paymentAccounts
+								.filter((choice) => choice.active)
+								.map(({ id, name }) => ({ id, name })),
+							categories: refs.categories
+								.filter((choice) => choice.active)
+								.map(({ id, name }) => ({ id, name })),
+							clients: refs.clients
+								.filter((choice) => choice.active)
+								.map(({ id, name }) => ({ id, name }))
+						},
+						ruleContext: { matched: false }
+					};
+					const classificationRun = yield* classifications.start(
+						expense.id,
+						job.id,
+						classifier.provider,
+						classifier.model,
+						JSON.stringify(request)
+					);
+					const result = yield* Effect.result(classifier.classify(request));
+					if (Result.isFailure(result)) {
+						yield* sql
+							.withTransaction(
+								Effect.gen(function* () {
+									yield* classifications.fail(
+										classificationRun.id,
+										result.failure.code,
+										result.failure.summary
+									);
+									yield* jobs.fail(
+										job,
+										result.failure.code,
+										result.failure.summary,
+										result.failure.retryable
+									);
+								})
+							)
+							.pipe(Effect.orDie);
+						return;
+					}
+					yield* sql
+						.withTransaction(
+							Effect.gen(function* () {
+								const current = yield* expenses.findById(expense.id);
+								if (current?.status !== 'needs_review') {
+									yield* classifications.fail(
+										classificationRun.id,
+										'expense_finalized',
+										'Expense review finished before classification completed'
+									);
+									yield* jobs.complete(job.id, JSON.stringify({ skipped: 'expense_finalized' }));
+									return;
+								}
+								const suggestion = yield* classifications.succeed(
+									classificationRun.id,
+									result.success
+								);
+								yield* jobs.complete(job.id, JSON.stringify({ suggestionId: suggestion.id }));
+							})
+						)
+						.pipe(Effect.orDie);
 				} else {
 					yield* jobs.complete(job.id);
 				}
@@ -383,9 +555,28 @@ export class JobService extends Context.Service<
 						yield* processAvailable;
 						return job;
 					}),
+				retryClassification: (expenseId) =>
+					Effect.gen(function* () {
+						const expense = yield* expenses.findById(expenseId);
+						if (!expense || expense.status !== 'needs_review') {
+							return yield* Effect.die(new Error('Expense is not available for classification'));
+						}
+						const state = yield* classifications.latestForExpense(expenseId);
+						if (state.run?.status !== 'failed') {
+							return yield* Effect.die(
+								new Error('Expense does not have a failed classification to retry')
+							);
+						}
+						const job = yield* jobs.createClassification(expenseId);
+						yield* processAvailable;
+						return job;
+					}),
 				recoverAndProcess: Effect.gen(function* () {
 					yield* ocrRuns.recoverInterrupted;
 					yield* jobs.recoverInterrupted;
+					yield* classifications.recoverInterrupted;
+					yield* expenses.reconcileSettled;
+					yield* jobs.enqueueMissingClassifications;
 					yield* processAvailable;
 				}),
 				processAvailable,
@@ -395,3 +586,9 @@ export class JobService extends Context.Service<
 		})
 	);
 }
+import {
+	ClassificationService,
+	projectStructuredOcr,
+	type ClassificationRequest
+} from './classification';
+import { ClassificationRepository } from './classification-repository';

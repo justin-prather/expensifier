@@ -8,6 +8,8 @@ import { afterEach } from 'vitest';
 
 import { ApprovalIntegrationService } from './approval-integration';
 import { AuditRepository } from './audit';
+import { ClassificationService } from './classification';
+import { ClassificationRepository } from './classification-repository';
 import { ensureManagedDirectories, loadRuntimeConfig } from './config';
 import { makeDatabaseLayer } from './database';
 import { DocumentRepository } from './documents';
@@ -18,6 +20,7 @@ import { JobRepository, JobService } from './jobs';
 import { OcrService } from './ocr';
 import { OcrRunRepository } from './ocr-runs';
 import { ReviewService, validateDraft } from './review';
+import { VendorRuleService } from './rules';
 import { TemplateService } from './templates';
 
 const temporaryRoots: Array<string> = [];
@@ -43,12 +46,18 @@ function makeReviewLayer() {
 		ExpenseRepository.layerWithoutDependencies,
 		AuditRepository.layerWithoutDependencies,
 		TemplateService.layerWithoutDependencies
-	).pipe(Layer.provide(makeDatabaseLayer(':memory:')));
+	).pipe(Layer.provideMerge(makeDatabaseLayer(':memory:')));
+	const classificationPersistence = Layer.merge(
+		ClassificationRepository.layerWithoutDependencies,
+		VendorRuleService.layerWithoutDependencies
+	).pipe(Layer.provideMerge(persistence));
 	const dependencies = Layer.mergeAll(
 		persistence,
+		classificationPersistence,
 		FileLifecycleService.layerFor(config),
 		ApprovalIntegrationService.layer,
-		OcrService.fakeLayer
+		OcrService.fakeLayer,
+		ClassificationService.fakeLayer()
 	);
 	const services = Layer.mergeAll(
 		JobService.layerWithoutDependencies,

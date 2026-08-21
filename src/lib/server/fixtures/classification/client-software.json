@@ -1,0 +1,11 @@
+{
+	"ocr": {
+		"merchantName": { "value": "Fixture Cloud Tools", "confidence": 0.92 },
+		"transactionDate": { "value": "2026-07-20", "confidence": 0.9 },
+		"totalAmount": { "value": "49.00", "confidence": 0.98 },
+		"taxAmount": { "value": null, "confidence": null },
+		"currencyCode": { "value": "USD", "confidence": 0.9 },
+		"lineItems": []
+	},
+	"expected": { "categoryName": "Software & Subscriptions", "billable": true }
+}

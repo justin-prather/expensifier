@@ -1,6 +1,7 @@
 import { AuditRepository } from '$lib/server/audit';
 import { hasUsers } from '$lib/server/auth';
 import { requirePermission } from '$lib/server/authorization';
+import { ClassificationRepository } from '$lib/server/classification-repository';
 import { DocumentRepository } from '$lib/server/documents';
 import { ExpenseRepository, type ExpenseDraftInput } from '$lib/server/expenses';
 import { JobService } from '$lib/server/jobs';
@@ -43,10 +44,15 @@ const DraftPayload = Schema.Struct({
 	clientId: Schema.NullOr(Schema.String),
 	paymentAccountId: Schema.NullOr(Schema.String),
 	lineItems: Schema.Array(LineItemPayload),
-	taxComponents: Schema.Array(TaxComponentPayload)
+	taxComponents: Schema.Array(TaxComponentPayload),
+	classificationSuggestionId: Schema.optional(Schema.NullOr(Schema.String))
 });
 
-function parseDraftPayload(value: unknown): ExpenseDraftInput | null {
+type ParsedDraftPayload = ExpenseDraftInput & {
+	readonly classificationSuggestionId?: string | null;
+};
+
+function parseDraftPayload(value: unknown): ParsedDraftPayload | null {
 	try {
 		return Schema.decodeUnknownSync(DraftPayload)(value);
 	} catch {
@@ -164,6 +170,11 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 			service.suggestForVendor(detail.expense.vendor ?? ocrVendorName)
 		)
 	);
+	const classification = suggestion
+		? { run: null, suggestion: null }
+		: await appRuntime.runPromise(
+				ClassificationRepository.use((repository) => repository.latestForExpense(expense.id))
+			);
 
 	return {
 		user: locals.user,
@@ -226,6 +237,18 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 		rawOcrJson: rawOcrJson ? rawOcrJson.slice(0, 40_000) : null,
 		ocrRunCount: runs.length,
 		suggestion,
+		classification: {
+			run: classification.run
+				? {
+						status: classification.run.status,
+						provider: classification.run.provider,
+						model: classification.run.model,
+						errorCode: classification.run.errorCode,
+						errorSummary: classification.run.errorSummary
+					}
+				: null,
+			suggestion: classification.suggestion ? { ...classification.suggestion } : null
+		},
 		preview,
 		previousId,
 		nextId,
@@ -238,7 +261,7 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 	};
 };
 
-async function draftFromRequest(request: Request): Promise<ExpenseDraftInput | null> {
+async function draftFromRequest(request: Request): Promise<ParsedDraftPayload | null> {
 	const formData = await request.formData();
 	const raw = formData.get('payload');
 	if (typeof raw !== 'string') return null;
@@ -258,10 +281,15 @@ export const actions: Actions = {
 		try {
 			await appRuntime.runPromise(
 				ReviewService.use((service) =>
-					service.saveDraft(params.id as string, input, {
-						id: user.id,
-						label: user.email ?? user.id
-					})
+					service.saveDraft(
+						params.id as string,
+						input,
+						{
+							id: user.id,
+							label: user.email ?? user.id
+						},
+						input.classificationSuggestionId
+					)
 				)
 			);
 			return { message: 'Draft saved' };
@@ -283,10 +311,15 @@ export const actions: Actions = {
 		try {
 			const targetPath = await appRuntime.runPromise(
 				ReviewService.use((service) =>
-					service.approve(params.id as string, input, {
-						id: user.id,
-						label: user.email ?? user.id
-					})
+					service.approve(
+						params.id as string,
+						input,
+						{
+							id: user.id,
+							label: user.email ?? user.id
+						},
+						input.classificationSuggestionId
+					)
 				)
 			);
 			return { approved: true, message: `Approved to ${targetPath}` };
@@ -372,6 +405,44 @@ export const actions: Actions = {
 			return { message: 'OCR retry requested' };
 		} catch {
 			return fail(409, { message: 'OCR is already active or unavailable' });
+		}
+	},
+
+	'retry-classification': async ({ locals, params }) => {
+		requirePermission(locals.user, 'expenses:edit');
+		if (!UUID_PATTERN.test(params.id)) return fail(400, { message: 'Invalid expense' });
+		try {
+			await appRuntime.runPromise(
+				JobService.use((service) => service.retryClassification(params.id as string))
+			);
+			return { message: 'Classification retry requested' };
+		} catch {
+			return fail(409, { message: 'Classification is already active or unavailable' });
+		}
+	},
+
+	'suggestion-outcome': async ({ locals, params, request }) => {
+		const user = requirePermission(locals.user, 'expenses:edit');
+		if (!UUID_PATTERN.test(params.id)) return fail(400, { message: 'Invalid expense' });
+		const form = await request.formData();
+		const suggestionId = form.get('suggestionId');
+		if (typeof suggestionId !== 'string') {
+			return fail(400, { message: 'Invalid suggestion outcome' });
+		}
+		try {
+			await appRuntime.runPromise(
+				ClassificationRepository.use((repository) =>
+					repository.recordOutcome(params.id as string, suggestionId, 'rejected', {
+						id: user.id,
+						label: user.email ?? user.id
+					})
+				)
+			);
+			return { message: 'Suggestion rejected' };
+		} catch (cause) {
+			return fail(409, {
+				message: (cause as { message?: string }).message ?? 'Unable to record outcome'
+			});
 		}
 	},
 

@@ -6,6 +6,9 @@ import { describe, expect, it } from '@effect/vitest';
 import { Effect, Layer } from 'effect';
 import { afterEach } from 'vitest';
 
+import { AuditRepository } from './audit';
+import { ClassificationService } from './classification';
+import { ClassificationRepository } from './classification-repository';
 import { ensureManagedDirectories, loadRuntimeConfig, type RuntimeConfig } from './config';
 import { makeDatabaseLayer } from './database';
 import { DocumentRepository } from './documents';
@@ -15,6 +18,7 @@ import { IntakeService } from './intake';
 import { JobRepository, JobService } from './jobs';
 import { OcrService } from './ocr';
 import { OcrRunRepository } from './ocr-runs';
+import { VendorRuleService } from './rules';
 
 const temporaryRoots: Array<string> = [];
 const pdfFixture = Buffer.from('%PDF-1.4\n% Expensifier sanitized fixture\n');
@@ -56,10 +60,20 @@ function makeTestLayer(config: RuntimeConfig) {
 		JobRepository.layerWithoutDependencies,
 		DocumentRepository.layerWithoutDependencies,
 		OcrRunRepository.layerWithoutDependencies,
-		ExpenseRepository.layerWithoutDependencies
-	).pipe(Layer.provide(makeDatabaseLayer(':memory:')));
+		ExpenseRepository.layerWithoutDependencies,
+		AuditRepository.layerWithoutDependencies
+	).pipe(Layer.provideMerge(makeDatabaseLayer(':memory:')));
+	const classificationPersistence = Layer.merge(
+		ClassificationRepository.layerWithoutDependencies,
+		VendorRuleService.layerWithoutDependencies
+	).pipe(Layer.provideMerge(persistence));
 	const dependencies = Layer.merge(
-		Layer.merge(persistence, FileLifecycleService.layerFor(config)),
+		Layer.mergeAll(
+			persistence,
+			classificationPersistence,
+			FileLifecycleService.layerFor(config),
+			ClassificationService.fakeLayer()
+		),
 		OcrService.fakeLayer
 	);
 	return Layer.merge(JobService.layerWithoutDependencies, IntakeService.layerFor(config)).pipe(

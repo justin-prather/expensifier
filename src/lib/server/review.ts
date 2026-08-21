@@ -1,8 +1,10 @@
 import { formatMinor, parseAmountToMinor, parseOptionalAmountToMinor } from '$lib/money';
 import { Context, Effect, Layer, Result } from 'effect';
+import { SqlClient } from 'effect/unstable/sql';
 
 import { ApprovalIntegrationService } from './approval-integration';
 import { AuditRepository } from './audit';
+import { ClassificationRepository, ClassificationStateError } from './classification-repository';
 import { DocumentRepository } from './documents';
 import {
 	ExpenseRepository,
@@ -262,13 +264,18 @@ export class ReviewService extends Context.Service<
 		readonly saveDraft: (
 			expenseId: string,
 			input: ExpenseDraftInput,
-			actor: Actor
-		) => Effect.Effect<void, ReviewValidationError | ReviewStateError>;
+			actor: Actor,
+			classificationSuggestionId?: string | null
+		) => Effect.Effect<void, ReviewValidationError | ReviewStateError | ClassificationStateError>;
 		readonly approve: (
 			expenseId: string,
 			input: ExpenseDraftInput,
-			actor: Actor
-		) => Effect.Effect<string, ReviewValidationError | ReviewStateError | FileLifecycleError>;
+			actor: Actor,
+			classificationSuggestionId?: string | null
+		) => Effect.Effect<
+			string,
+			ReviewValidationError | ReviewStateError | FileLifecycleError | ClassificationStateError
+		>;
 		readonly reject: (
 			expenseId: string,
 			reason: string,
@@ -287,6 +294,8 @@ export class ReviewService extends Context.Service<
 			const templates = yield* TemplateService;
 			const audit = yield* AuditRepository;
 			const integration = yield* ApprovalIntegrationService;
+			const classifications = yield* ClassificationRepository;
+			const sql = yield* SqlClient.SqlClient;
 
 			const requireReviewable = Effect.fn('ReviewService.requireReviewable')(function* (
 				expenseId: string
@@ -346,32 +355,48 @@ export class ReviewService extends Context.Service<
 			const saveDraft = Effect.fn('ReviewService.saveDraft')(function* (
 				expenseId: string,
 				input: ExpenseDraftInput,
-				actor: Actor
+				actor: Actor,
+				classificationSuggestionId?: string | null
 			) {
 				const detail = yield* expenses.detailFor(expenseId);
 				if (!detail)
 					return yield* Effect.fail(new ReviewStateError({ message: 'Expense not found' }));
 				const refs = yield* expenses.referenceData;
 				const draft = yield* validateDraft(input, refs, false);
-				yield* expenses.saveDraft(expenseId, draft);
-				yield* audit.append({
-					actorUserId: actor.id,
-					actorLabel: actor.label,
-					action: 'reviewer_edited',
-					entityType: 'expense',
-					entityId: expenseId,
-					data: {
-						vendor: draft.vendor,
-						totalMinor: draft.totalMinor,
-						currency: draft.currency
-					}
-				});
+				yield* sql
+					.withTransaction(
+						Effect.gen(function* () {
+							yield* expenses.saveDraft(expenseId, draft);
+							if (classificationSuggestionId) {
+								yield* classifications.recordSubmittedOutcome(
+									expenseId,
+									classificationSuggestionId,
+									draft,
+									actor
+								);
+							}
+							yield* audit.append({
+								actorUserId: actor.id,
+								actorLabel: actor.label,
+								action: 'reviewer_edited',
+								entityType: 'expense',
+								entityId: expenseId,
+								data: {
+									vendor: draft.vendor,
+									totalMinor: draft.totalMinor,
+									currency: draft.currency
+								}
+							});
+						})
+					)
+					.pipe(Effect.catchTag('SqlError', Effect.die));
 			});
 
 			const approve = Effect.fn('ReviewService.approve')(function* (
 				expenseId: string,
 				input: ExpenseDraftInput,
-				actor: Actor
+				actor: Actor,
+				classificationSuggestionId?: string | null
 			) {
 				const context = yield* requireReviewable(expenseId);
 				const refs = yield* expenses.referenceData;
@@ -401,15 +426,29 @@ export class ReviewService extends Context.Service<
 					);
 				}
 
-				yield* expenses.saveDraft(expenseId, draft);
-				yield* audit.append({
-					actorUserId: actor.id,
-					actorLabel: actor.label,
-					action: 'approval_started',
-					entityType: 'expense',
-					entityId: expenseId,
-					data: { targetRelativePath }
-				});
+				yield* sql
+					.withTransaction(
+						Effect.gen(function* () {
+							yield* expenses.saveDraft(expenseId, draft);
+							if (classificationSuggestionId) {
+								yield* classifications.recordSubmittedOutcome(
+									expenseId,
+									classificationSuggestionId,
+									draft,
+									actor
+								);
+							}
+							yield* audit.append({
+								actorUserId: actor.id,
+								actorLabel: actor.label,
+								action: 'approval_started',
+								entityType: 'expense',
+								entityId: expenseId,
+								data: { targetRelativePath }
+							});
+						})
+					)
+					.pipe(Effect.catchTag('SqlError', Effect.die));
 
 				return yield* moveWithIntent(
 					expenseId,

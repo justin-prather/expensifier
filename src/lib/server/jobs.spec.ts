@@ -4,8 +4,12 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from '@effect/vitest';
 import { Effect, Layer } from 'effect';
+import { SqlClient } from 'effect/unstable/sql';
 import { afterEach } from 'vitest';
 
+import { AuditRepository } from './audit';
+import { ClassificationService } from './classification';
+import { ClassificationRepository } from './classification-repository';
 import { ensureManagedDirectories, loadRuntimeConfig } from './config';
 import { makeDatabaseLayer } from './database';
 import { DocumentRepository } from './documents';
@@ -15,6 +19,7 @@ import { IntakeService } from './intake';
 import { JobRepository, JobService } from './jobs';
 import { OcrError, OcrService } from './ocr';
 import { OcrRunRepository } from './ocr-runs';
+import { VendorRuleService } from './rules';
 
 const temporaryRoots: Array<string> = [];
 
@@ -36,9 +41,20 @@ function makeWorkflowLayer(ocrLayer = OcrService.fakeLayer) {
 		JobRepository.layerWithoutDependencies,
 		DocumentRepository.layerWithoutDependencies,
 		OcrRunRepository.layerWithoutDependencies,
-		ExpenseRepository.layerWithoutDependencies
-	).pipe(Layer.provide(makeDatabaseLayer(':memory:')));
-	const dependencies = Layer.mergeAll(persistence, FileLifecycleService.layerFor(config), ocrLayer);
+		ExpenseRepository.layerWithoutDependencies,
+		AuditRepository.layerWithoutDependencies
+	).pipe(Layer.provideMerge(makeDatabaseLayer(':memory:')));
+	const classificationPersistence = Layer.merge(
+		ClassificationRepository.layerWithoutDependencies,
+		VendorRuleService.layerWithoutDependencies
+	).pipe(Layer.provideMerge(persistence));
+	const dependencies = Layer.mergeAll(
+		persistence,
+		classificationPersistence,
+		FileLifecycleService.layerFor(config),
+		ocrLayer,
+		ClassificationService.fakeLayer()
+	);
 	const services = Layer.merge(
 		JobService.layerWithoutDependencies,
 		IntakeService.layerFor(config)
@@ -64,6 +80,8 @@ describe('OCR workflow', () => {
 			const jobs = yield* JobService;
 			const documents = yield* DocumentRepository;
 			const runs = yield* OcrRunRepository;
+			const expenses = yield* ExpenseRepository;
+			const classifications = yield* ClassificationRepository;
 			yield* intake.reconcile;
 			yield* jobs.processAvailable;
 
@@ -79,7 +97,110 @@ describe('OCR workflow', () => {
 				expect(history[0]?.providerVersion).toBe('fixture-v1');
 				expect(history[0]?.attemptNumber).toBe(1);
 				expect(history[0]?.rawResponseJson).toContain(item.document.mimeType);
+				const expense = yield* expenses.findByDocumentId(item.document.id);
+				expect(expense).not.toBeNull();
+				const classification = yield* classifications.latestForExpense(expense!.id);
+				expect(classification.run?.status).toBe('succeeded');
+				expect(classification.suggestion?.provider).toBe('fake');
 			}
+		}).pipe(Effect.provide(layer));
+	});
+
+	it.live('backfills classification after startup settles an OCR-complete expense', () => {
+		const { config, layer } = makeWorkflowLayer();
+		writeFileSync(join(config.directories.inbox, 'settled-on-startup.pdf'), '%PDF-1.4\nfixture');
+
+		return Effect.gen(function* () {
+			const intake = yield* IntakeService;
+			const service = yield* JobService;
+			const documents = yield* DocumentRepository;
+			const expenses = yield* ExpenseRepository;
+			const classifications = yield* ClassificationRepository;
+			const sql = yield* SqlClient.SqlClient;
+			yield* intake.reconcile;
+			yield* service.processAvailable;
+			const document = (yield* documents.queue)[0]!.document;
+			const expense = (yield* expenses.findByDocumentId(document.id))!;
+			yield* sql`DELETE FROM classification_suggestions WHERE expense_id = ${expense.id}`;
+			yield* sql`DELETE FROM classification_runs WHERE expense_id = ${expense.id}`;
+			yield* sql`DELETE FROM jobs WHERE type = 'classify_expense' AND related_entity_id = ${expense.id}`;
+			yield* sql`UPDATE expenses SET status = 'processing' WHERE id = ${expense.id}`;
+
+			yield* service.recoverAndProcess;
+			const recoveredExpense = yield* expenses.findById(expense.id);
+			const state = yield* classifications.latestForExpense(expense.id);
+
+			expect(recoveredExpense?.status).toBe('needs_review');
+			expect(state.run?.status).toBe('succeeded');
+			expect(state.suggestion?.provider).toBe('fake');
+		}).pipe(Effect.provide(layer));
+	});
+
+	it.live('skips AI classification when an active deterministic rule matches', () => {
+		const { config, layer } = makeWorkflowLayer();
+		writeFileSync(join(config.directories.inbox, 'rule-match.pdf'), '%PDF-1.4\nfixture');
+
+		return Effect.gen(function* () {
+			const rules = yield* VendorRuleService;
+			const intake = yield* IntakeService;
+			const jobs = yield* JobService;
+			const documents = yield* DocumentRepository;
+			const expenses = yield* ExpenseRepository;
+			const classifications = yield* ClassificationRepository;
+			yield* rules.create(
+				{
+					alias: 'sanitized fixture merchant',
+					vendorName: 'Fixture Merchant',
+					paymentAccountId: null,
+					categoryId: null,
+					clientId: null
+				},
+				{ id: 'admin-1', label: 'Admin One' }
+			);
+			yield* intake.reconcile;
+			yield* jobs.processAvailable;
+
+			const item = (yield* documents.queue)[0]!;
+			const expense = yield* expenses.findByDocumentId(item.document.id);
+			const state = yield* classifications.latestForExpense(expense!.id);
+			const classificationJob = (yield* jobs.list).find((job) => job.type === 'classify_expense');
+
+			expect(state.run).toBeNull();
+			expect(classificationJob?.status).toBe('succeeded');
+			expect(classificationJob?.resultJson).toContain('deterministic_rule');
+		}).pipe(Effect.provide(layer));
+	});
+
+	it.live('marks interrupted external classification outcomes failed on recovery', () => {
+		const { config, layer } = makeWorkflowLayer();
+		writeFileSync(
+			join(config.directories.inbox, 'interrupted-classification.pdf'),
+			'%PDF-1.4\nfixture'
+		);
+
+		return Effect.gen(function* () {
+			const intake = yield* IntakeService;
+			const service = yield* JobService;
+			const jobs = yield* JobRepository;
+			const documents = yield* DocumentRepository;
+			const expenses = yield* ExpenseRepository;
+			yield* intake.reconcile;
+			yield* service.processAvailable;
+			const document = (yield* documents.queue)[0]!.document;
+			const expense = (yield* expenses.findByDocumentId(document.id))!;
+			const pending = yield* jobs.createClassification(expense.id);
+			const claimed = yield* jobs.claimNext;
+			expect(claimed?.id).toBe(pending.id);
+
+			yield* service.recoverAndProcess;
+			const classifications = yield* ClassificationRepository;
+			const state = yield* classifications.latestForExpense(expense.id);
+			const recoveredJob = (yield* jobs.list).find((job) => job.id === pending.id);
+
+			expect(recoveredJob?.status).toBe('failed');
+			expect(recoveredJob?.errorCode).toBe('outcome_unknown');
+			expect(state.run?.status).toBe('failed');
+			expect(state.run?.errorCode).toBe('outcome_unknown');
 		}).pipe(Effect.provide(layer));
 	});
 

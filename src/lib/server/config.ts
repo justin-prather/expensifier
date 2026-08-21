@@ -26,6 +26,11 @@ export interface RuntimeConfig {
 	readonly ocrTimeoutMilliseconds: number;
 	readonly ocrMaxFileBytes: number;
 	readonly ocrMaxResponseBytes: number;
+	readonly classificationApiKey: string | null;
+	readonly classificationEndpoint: string;
+	readonly classificationModel: string;
+	readonly classificationTimeoutMilliseconds: number;
+	readonly classificationMaxResponseBytes: number;
 }
 
 function isWithin(root: string, candidate: string): boolean {
@@ -189,6 +194,24 @@ function parseRuntimeConfig(
 			environment.OCR_MAX_RESPONSE_BYTES,
 			5_000_000,
 			'OCR_MAX_RESPONSE_BYTES',
+			1
+		),
+		classificationApiKey: environment.CLASSIFICATION_API_KEY?.trim() || null,
+		classificationEndpoint: validHttpsUrl(
+			environment.CLASSIFICATION_ENDPOINT ?? 'https://api.openai.com/v1/responses',
+			'CLASSIFICATION_ENDPOINT'
+		),
+		classificationModel: environment.CLASSIFICATION_MODEL?.trim() || 'gpt-4.1-mini',
+		classificationTimeoutMilliseconds: integerSetting(
+			environment.CLASSIFICATION_TIMEOUT_MILLISECONDS,
+			20_000,
+			'CLASSIFICATION_TIMEOUT_MILLISECONDS',
+			1000
+		),
+		classificationMaxResponseBytes: integerSetting(
+			environment.CLASSIFICATION_MAX_RESPONSE_BYTES,
+			1_000_000,
+			'CLASSIFICATION_MAX_RESPONSE_BYTES',
 			1
 		)
 	};

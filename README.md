@@ -127,6 +127,21 @@ Timeouts, rate limits, and provider outages use the bounded durable-job retry po
 
 Contract tests use sanitized Taggun response fixtures and do not consume live provider scans.
 
+## AI Classification
+
+After successful OCR, a durable classification job first checks active deterministic vendor rules.
+Only unmatched expenses invoke the configured OpenAI Responses API Layer. The provider receives a
+new allow-listed object containing normalized OCR values/confidence and active payment-account,
+category, and client candidates; it never receives the document, filename, path, raw OCR response,
+or OCR source paths. Strict structured output is validated again against the supplied candidate IDs
+before a suggestion is stored.
+
+Set `CLASSIFICATION_API_KEY` to enable the production Layer. Missing credentials or provider failures
+do not change local expense status or block manual review. Admins can inspect non-secret provider
+status at `/settings/integrations`; suggestions and explicit accepted, rejected, or replaced outcomes
+are retained in SQLite and audit history. See `docs/ai-provider-decision.md` for the candidate
+comparison, fixture method, selected model, and privacy boundary.
+
 ## Effect Version
 
 Effect is pinned to `4.0.0-rc.111`, including `@effect/sql-sqlite-bun` and `@effect/vitest`. Do not mix Effect v3 packages or patterns into the application.

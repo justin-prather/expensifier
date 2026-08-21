@@ -46,4 +46,13 @@ describe('runtime configuration', () => {
 			})
 		).toThrow('BETTER_AUTH_SECRET must contain at least 32 characters in production');
 	});
+
+	it('keeps classification credentials optional and requires a secure provider endpoint', () => {
+		const config = loadRuntimeConfig({});
+		expect(config.classificationApiKey).toBeNull();
+		expect(config.classificationModel).toBe('gpt-4.1-mini');
+		expect(() =>
+			loadRuntimeConfig({ CLASSIFICATION_ENDPOINT: 'http://classification.example.test/v1' })
+		).toThrow('CLASSIFICATION_ENDPOINT must use https');
+	});
 });

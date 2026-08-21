@@ -15,6 +15,11 @@
 			href: '/settings/users',
 			label: 'Users and invitations',
 			description: 'Invite people, assign roles, and revoke pending invitations.'
+		},
+		{
+			href: '/settings/integrations',
+			label: 'AI classification',
+			description: 'Inspect the selected provider, model, credential status, and privacy boundary.'
 		}
 	];
 </script>
@@ -43,7 +48,7 @@
 		<p class="font-mono text-xs font-bold tracking-[0.2em] text-forest uppercase">Admin settings</p>
 	</header>
 
-	<section class="grid gap-6 py-8 md:grid-cols-3">
+	<section class="grid gap-6 py-8 md:grid-cols-2 lg:grid-cols-4">
 		{#each sections as section (section.href)}
 			<a
 				href={section.href}
