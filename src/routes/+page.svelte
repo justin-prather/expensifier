@@ -4,27 +4,60 @@
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	type QueueItem = PageData['queue'][number];
-	type DisplayStatus = 'moving' | 'awaiting_ocr' | 'duplicate' | 'failed';
+	type DisplayStatus =
+		| 'moving'
+		| 'ocr_queued'
+		| 'ocr_running'
+		| 'ocr_retrying'
+		| 'needs_review'
+		| 'ocr_failed'
+		| 'intake_failed';
 
 	const statusStyle = {
 		moving: 'bg-sky-100 text-sky-800',
-		awaiting_ocr: 'bg-emerald-100 text-emerald-800',
-		duplicate: 'bg-amber-100 text-amber-900',
-		failed: 'bg-rose-100 text-rose-800'
+		ocr_queued: 'bg-violet-100 text-violet-800',
+		ocr_running: 'bg-blue-100 text-blue-800',
+		ocr_retrying: 'bg-amber-100 text-amber-900',
+		needs_review: 'bg-emerald-100 text-emerald-800',
+		ocr_failed: 'bg-rose-100 text-rose-800',
+		intake_failed: 'bg-rose-100 text-rose-800'
 	} as const;
 
 	const statusLabel = {
 		moving: 'Moving',
-		awaiting_ocr: 'Awaiting OCR',
-		duplicate: 'Duplicate review',
-		failed: 'Intake failed'
+		ocr_queued: 'OCR queued',
+		ocr_running: 'Reading receipt',
+		ocr_retrying: 'OCR retrying',
+		needs_review: 'Ready for review',
+		ocr_failed: 'OCR failed',
+		intake_failed: 'Intake failed'
 	} as const;
 
 	function displayStatus(item: QueueItem): DisplayStatus {
-		if (item.document.status === 'failed' || item.jobStatus === 'failed') return 'failed';
-		if (item.document.duplicateOfDocumentId) return 'duplicate';
-		if (item.jobStatus === 'succeeded') return 'awaiting_ocr';
-		return 'moving';
+		if (item.document.status === 'failed' || item.jobStatus === 'failed') return 'intake_failed';
+		if (item.jobStatus !== 'succeeded') return 'moving';
+		if (item.ocrStatus === 'failed') return 'ocr_failed';
+		if (item.ocrStatus === 'running') return 'ocr_running';
+		if (item.ocrStatus === 'pending' && item.ocrAttemptCount > 0) return 'ocr_retrying';
+		if (item.ocrStatus === 'succeeded') return 'needs_review';
+		return 'ocr_queued';
+	}
+
+	function resultSummary(item: QueueItem): string | null {
+		if (!item.normalizedOcrJson) return null;
+		try {
+			const value = JSON.parse(item.normalizedOcrJson);
+			const merchant = value?.merchantName?.value;
+			const total = value?.totalAmount?.value;
+			const currency = value?.currencyCode?.value;
+			return (
+				[merchant, total && currency ? `${currency} ${total}` : total]
+					.filter(Boolean)
+					.join(' / ') || null
+			);
+		} catch {
+			return null;
+		}
 	}
 
 	function formatBytes(bytes: number): string {
@@ -35,8 +68,8 @@
 </script>
 
 <svelte:head>
-	<title>Intake queue | Expensifier</title>
-	<meta name="description" content="Durable watched-folder intake queue for Expensifier." />
+	<title>OCR queue | Expensifier</title>
+	<meta name="description" content="Durable receipt intake and OCR queue for Expensifier." />
 </svelte:head>
 
 <main class="mx-auto min-h-screen max-w-7xl px-5 py-6 sm:px-8 sm:py-10">
@@ -45,10 +78,10 @@
 	>
 		<div>
 			<p class="font-mono text-xs font-bold tracking-[0.24em] text-forest uppercase">
-				Phase 03 / Durable Intake
+				Phase 04 / Receipt OCR
 			</p>
 			<h1 class="mt-2 text-4xl font-semibold tracking-[-0.045em] sm:text-6xl">
-				Files arrive.<br />The ledger remembers.
+				Receipts arrive.<br />Evidence remains.
 			</h1>
 		</div>
 		<div class="flex flex-wrap items-center gap-3 sm:max-w-xs sm:justify-end">
@@ -79,17 +112,24 @@
 			<p class="mt-2 text-3xl font-semibold">{data.queue.length}</p>
 		</div>
 		<div class="border border-ink/30 bg-white/35 p-4">
-			<p class="font-mono text-[11px] font-bold tracking-[0.16em] text-ink/50 uppercase">Moving</p>
+			<p class="font-mono text-[11px] font-bold tracking-[0.16em] text-ink/50 uppercase">
+				Active OCR
+			</p>
 			<p class="mt-2 text-3xl font-semibold">
-				{data.queue.filter((item) => displayStatus(item) === 'moving').length}
+				{data.queue.filter(
+					(item) =>
+						displayStatus(item) === 'ocr_running' ||
+						displayStatus(item) === 'ocr_queued' ||
+						displayStatus(item) === 'ocr_retrying'
+				).length}
 			</p>
 		</div>
 		<div class="border border-ink/30 bg-white/35 p-4">
 			<p class="font-mono text-[11px] font-bold tracking-[0.16em] text-ink/50 uppercase">
-				Duplicates
+				OCR ready
 			</p>
 			<p class="mt-2 text-3xl font-semibold">
-				{data.queue.filter((item) => displayStatus(item) === 'duplicate').length}
+				{data.queue.filter((item) => displayStatus(item) === 'needs_review').length}
 			</p>
 		</div>
 		<div class="border border-ink/30 bg-white/35 p-4">
@@ -97,7 +137,9 @@
 				Failures
 			</p>
 			<p class="mt-2 text-3xl font-semibold">
-				{data.queue.filter((item) => displayStatus(item) === 'failed').length}
+				{data.queue.filter(
+					(item) => displayStatus(item) === 'ocr_failed' || displayStatus(item) === 'intake_failed'
+				).length}
 			</p>
 		</div>
 	</section>
@@ -106,8 +148,8 @@
 		<div class="border-2 border-ink bg-paper shadow-[7px_7px_0_#17231d]">
 			<div class="flex items-center justify-between border-b-2 border-ink p-5">
 				<div>
-					<p class="font-mono text-xs tracking-[0.18em] uppercase">Watched-folder ledger</p>
-					<h2 class="mt-1 text-2xl font-semibold">Document queue</h2>
+					<p class="font-mono text-xs tracking-[0.18em] uppercase">Retained extraction ledger</p>
+					<h2 class="mt-1 text-2xl font-semibold">OCR queue</h2>
 				</div>
 				<span
 					class="grid size-11 place-items-center rounded-full bg-forest font-mono text-sm font-bold text-white"
@@ -148,15 +190,37 @@
 										Matches document {item.document.duplicateOfDocumentId.slice(0, 8)}
 									</p>
 								{/if}
-								{#if item.errorCode}
-									<p class="mt-2 font-mono text-xs text-rose-700">{item.errorCode}</p>
+								{#if resultSummary(item)}
+									<p class="mt-2 text-sm text-forest">{resultSummary(item)}</p>
+								{/if}
+								{#if item.ocrErrorCode || item.errorCode}
+									<p class="mt-2 font-mono text-xs text-rose-700">
+										{item.ocrErrorCode ?? item.errorCode}
+									</p>
+									{#if item.ocrErrorSummary}<p class="mt-1 text-xs text-rose-700">
+											{item.ocrErrorSummary}
+										</p>{/if}
 								{/if}
 							</div>
-							<span
-								class={`w-fit px-2.5 py-1 font-mono text-xs font-bold uppercase ${statusStyle[state]}`}
-							>
-								{statusLabel[state]}
-							</span>
+							<div class="flex flex-col items-start gap-2 sm:items-end">
+								<span
+									class={`w-fit px-2.5 py-1 font-mono text-xs font-bold uppercase ${statusStyle[state]}`}
+									>{statusLabel[state]}</span
+								>
+								{#if item.document.duplicateOfDocumentId}<span
+										class="bg-amber-100 px-2 py-1 font-mono text-[10px] font-bold text-amber-900 uppercase"
+										>Duplicate</span
+									>{/if}
+								{#if state === 'ocr_failed'}
+									<form method="POST" action="?/retry-ocr">
+										<input type="hidden" name="documentId" value={item.document.id} />
+										<button
+											class="border border-ink px-2.5 py-1 font-mono text-xs font-bold uppercase hover:bg-ink hover:text-paper"
+											>Retry OCR</button
+										>
+									</form>
+								{/if}
+							</div>
 						</article>
 					{/each}
 				</div>
@@ -166,16 +230,18 @@
 		<aside class="flex flex-col justify-between bg-forest p-6 text-white">
 			<div>
 				<p class="font-mono text-xs font-bold tracking-[0.2em] text-white/55 uppercase">
-					Intake monitor
+					OCR monitor
 				</p>
 				<h2 class="mt-4 text-3xl font-semibold tracking-tight">
-					Events are fast. Reconciliation is certain.
+					Normalized fields. Original evidence.
 				</h2>
 				<ul class="mt-7 space-y-3 text-sm text-white/70">
 					<li class="border-t border-white/20 pt-3">Stable-file checks</li>
 					<li class="border-t border-white/20 pt-3">SHA-256 duplicate links</li>
 					<li class="border-t border-white/20 pt-3">Atomic processing moves</li>
 					<li class="border-t border-white/20 pt-3">Bounded retry and restart recovery</li>
+					<li class="border-t border-white/20 pt-3">Raw response retention</li>
+					<li class="border-t border-white/20 pt-3">Field confidence and provenance</li>
 				</ul>
 			</div>
 			<div class="mt-10">

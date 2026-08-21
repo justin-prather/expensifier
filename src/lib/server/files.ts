@@ -89,12 +89,14 @@ export class FileLifecycleService extends Context.Service<
 		readonly discover: Effect.Effect<ReadonlyArray<FileCandidate>, FileLifecycleError>;
 		readonly hash: (path: string) => Effect.Effect<string, FileLifecycleError>;
 		readonly moveToProcessing: (document: Document) => Effect.Effect<string, FileLifecycleError>;
+		readonly absolutePath: (document: Document) => string;
 	}
 >()('expensifier/FileLifecycleService') {
 	static layerFor(config: RuntimeConfig) {
 		return Layer.succeed(
 			FileLifecycleService,
 			FileLifecycleService.of({
+				absolutePath: (document) => resolveWithin(config.dataRoot, document.currentRelativePath),
 				discover: Effect.tryPromise({
 					try: async () => {
 						const walk = async (directory: string): Promise<ReadonlyArray<FileCandidate>> => {

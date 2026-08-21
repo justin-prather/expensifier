@@ -29,7 +29,14 @@ export class QueueItem extends Schema.Class<QueueItem>('QueueItem')({
 	attemptCount: Schema.Number,
 	maxAttempts: Schema.Number,
 	errorCode: Schema.NullOr(Schema.String),
-	nextAttemptAt: Schema.NullOr(Schema.String)
+	nextAttemptAt: Schema.NullOr(Schema.String),
+	ocrStatus: Schema.NullOr(Schema.Literals(['pending', 'running', 'succeeded', 'failed'])),
+	ocrAttemptCount: Schema.Number,
+	ocrMaxAttempts: Schema.Number,
+	ocrErrorCode: Schema.NullOr(Schema.String),
+	ocrErrorSummary: Schema.NullOr(Schema.String),
+	ocrNextAttemptAt: Schema.NullOr(Schema.String),
+	normalizedOcrJson: Schema.NullOr(Schema.String)
 }) {}
 
 export interface StageDocumentInput {
@@ -154,11 +161,30 @@ export class DocumentRepository extends Context.Service<
 				currentRelativePath: string
 			) {
 				const now = new Date().toISOString();
-				yield* sql`
-					UPDATE documents SET status = 'processing', current_relative_path = ${currentRelativePath},
-						managed_at = COALESCE(managed_at, ${now}), updated_at = ${now}
-					WHERE id = ${id}
-				`;
+				yield* sql.withTransaction(
+					Effect.gen(function* () {
+						const rows = yield* sql<{ readonly ocrEnqueuedAt: string | null }>`
+							SELECT ocr_enqueued_at AS ocrEnqueuedAt FROM documents WHERE id = ${id}
+						`;
+						yield* sql`
+							UPDATE documents SET status = 'processing', current_relative_path = ${currentRelativePath},
+								managed_at = COALESCE(managed_at, ${now}), ocr_enqueued_at = COALESCE(ocr_enqueued_at, ${now}),
+								updated_at = ${now}
+							WHERE id = ${id}
+						`;
+						if (rows[0] && !rows[0].ocrEnqueuedAt) {
+							yield* sql`
+								INSERT INTO jobs (
+									id, type, status, related_entity_id, attempt_count, max_attempts,
+									next_attempt_at, created_at, updated_at
+								) VALUES (
+									${crypto.randomUUID()}, 'ocr_document', 'pending', ${id}, 0,
+									${runtimeConfig.jobMaxAttempts}, ${now}, ${now}, ${now}
+								)
+							`;
+						}
+					})
+				);
 			}, Effect.orDie);
 
 			const markFailed = Effect.fn('DocumentRepository.markFailed')(function* (id: string) {
@@ -176,14 +202,38 @@ export class DocumentRepository extends Context.Service<
 						readonly maxAttempts: number;
 						readonly errorCode: string | null;
 						readonly nextAttemptAt: string | null;
+						readonly ocrStatus: QueueItem['ocrStatus'];
+						readonly ocrAttemptCount: number | null;
+						readonly ocrMaxAttempts: number | null;
+						readonly ocrErrorCode: string | null;
+						readonly ocrErrorSummary: string | null;
+						readonly ocrNextAttemptAt: string | null;
+						readonly normalizedOcrJson: string | null;
 					}
 				>`
 					SELECT ${sql.unsafe(joinedDocumentColumns)},
 						jobs.status AS jobStatus, jobs.attempt_count AS attemptCount,
 						jobs.max_attempts AS maxAttempts, jobs.error_code AS errorCode,
-						jobs.next_attempt_at AS nextAttemptAt
+						jobs.next_attempt_at AS nextAttemptAt,
+						ocr_jobs.status AS ocrStatus, ocr_jobs.attempt_count AS ocrAttemptCount,
+						ocr_jobs.max_attempts AS ocrMaxAttempts, ocr_jobs.error_code AS ocrErrorCode,
+						ocr_jobs.error_summary AS ocrErrorSummary,
+						ocr_jobs.next_attempt_at AS ocrNextAttemptAt,
+						ocr_runs.normalized_result_json AS normalizedOcrJson
 					FROM documents
 					JOIN jobs ON jobs.related_entity_id = documents.id AND jobs.type = 'intake_document'
+					LEFT JOIN jobs AS ocr_jobs ON ocr_jobs.id = (
+						SELECT id FROM jobs AS latest_ocr_job
+						WHERE latest_ocr_job.related_entity_id = documents.id
+							AND latest_ocr_job.type = 'ocr_document'
+						ORDER BY latest_ocr_job.created_at DESC LIMIT 1
+					)
+					LEFT JOIN ocr_runs ON ocr_runs.id = (
+						SELECT id FROM ocr_runs AS latest_success
+						WHERE latest_success.document_id = documents.id
+							AND latest_success.status = 'succeeded'
+						ORDER BY latest_success.started_at DESC LIMIT 1
+					)
 					ORDER BY documents.created_at DESC
 				`;
 				return rows.map(
@@ -194,7 +244,14 @@ export class DocumentRepository extends Context.Service<
 							attemptCount: row.attemptCount,
 							maxAttempts: row.maxAttempts,
 							errorCode: row.errorCode,
-							nextAttemptAt: row.nextAttemptAt
+							nextAttemptAt: row.nextAttemptAt,
+							ocrStatus: row.ocrStatus,
+							ocrAttemptCount: row.ocrAttemptCount ?? 0,
+							ocrMaxAttempts: row.ocrMaxAttempts ?? runtimeConfig.jobMaxAttempts,
+							ocrErrorCode: row.ocrErrorCode,
+							ocrErrorSummary: row.ocrErrorSummary,
+							ocrNextAttemptAt: row.ocrNextAttemptAt,
+							normalizedOcrJson: row.normalizedOcrJson
 						})
 				);
 			}).pipe(Effect.orDie);

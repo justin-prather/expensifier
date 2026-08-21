@@ -1,6 +1,6 @@
 # Expensifier
 
-Expensifier is a self-hosted expense intake and review system for Unraid. Phase 3, durable watched-folder intake as defined in `PROJECT_SPEC.md`, is complete.
+Expensifier is a self-hosted expense intake and review system for Unraid. Phase 4, durable receipt OCR as defined in `PROJECT_SPEC.md`, is complete.
 
 ## Current Foundation
 
@@ -9,8 +9,8 @@ Expensifier is a self-hosted expense intake and review system for Unraid. Phase 
 - Oxlint and Oxfmt code-quality tooling.
 - Effect v4 RC services, Layers, and `ManagedRuntime`.
 - Effect SQL with Bun SQLite migrations.
-- Replaceable `OcrService` with a fake implementation.
-- Durable fake OCR jobs that persist across restarts.
+- Replaceable `OcrService` with production Taggun and test-fixture Layers.
+- Durable OCR jobs and immutable provider-run history that persist across restarts.
 - Better Auth email/password authentication.
 - One-time first-admin setup with public registration blocked afterward.
 - Bun-native production build and Docker Compose deployment.
@@ -28,6 +28,10 @@ Expensifier is a self-hosted expense intake and review system for Unraid. Phase 
 - Database-first intake staging followed by recoverable atomic moves into the processing directory.
 - Durable job claims with bounded backoff, sanitized failures, and interrupted-work recovery.
 - Authenticated intake queue showing move, duplicate, failure, and awaiting-OCR states.
+- Automatic Taggun OCR after intake with multipart PDF, JPEG, and PNG uploads.
+- Provider-neutral normalized fields with confidence and source-path provenance.
+- Raw provider-response retention, classified failures, bounded retries, and manual retry.
+- Authenticated OCR queue showing active, retrying, successful, and recoverable failure states.
 
 `Legacy/` remains ignored reference material and is not part of the application build.
 
@@ -43,7 +47,7 @@ Create local configuration:
 cp .env.example .env
 ```
 
-Replace `BETTER_AUTH_SECRET` with at least 32 random characters, then install and start:
+Replace `BETTER_AUTH_SECRET` with at least 32 random characters and set `TAGGUN_API_KEY`, then install and start:
 
 ```sh
 bun install
@@ -114,6 +118,14 @@ Place supported PDF, JPG, JPEG, or PNG files beneath `data/inbox/`. A file must 
 5. Atomically moves the file to a document-ID-based path beneath `data/processing/`.
 
 Filesystem events reduce latency, while periodic scans remain the source of truth. Interrupted running jobs return to the pending queue at startup. See `.env.example` for stability, scan, polling, and retry settings.
+
+## Receipt OCR
+
+Successful intake automatically creates a durable Taggun OCR job. The integration uses Taggun's verbose file endpoint with line-item extraction enabled and `incognito=true`. Each provider attempt creates an immutable OCR-run record containing either the raw response plus normalized result or sanitized failure metadata. Normalized merchant, date, total, tax, currency, and line-item values retain confidence and provider source paths; missing fields remain null for later manual review.
+
+Timeouts, rate limits, and provider outages use the bounded durable-job retry policy. Authentication, configuration, invalid-response, and rejected-document failures remain visible without automatic retry. Authorized users can request another OCR run from the queue; earlier runs and results are never overwritten. If `TAGGUN_API_KEY` is absent, intake still operates and OCR items show a configuration failure until credentials are added and the application is restarted.
+
+Contract tests use sanitized Taggun response fixtures and do not consume live provider scans.
 
 ## Effect Version
 

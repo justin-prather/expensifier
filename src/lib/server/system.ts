@@ -9,14 +9,17 @@ import { InvitationService } from './invitations';
 import { JobRepository, JobService } from './jobs';
 import { logOperationalEvent } from './logger';
 import { OcrService } from './ocr';
+import { OcrRunRepository } from './ocr-runs';
 
-const PersistenceLive = Layer.merge(
-	Layer.merge(JobRepository.layerWithoutDependencies, InvitationService.layerWithoutDependencies),
-	DocumentRepository.layerWithoutDependencies
+const PersistenceLive = Layer.mergeAll(
+	JobRepository.layerWithoutDependencies,
+	InvitationService.layerWithoutDependencies,
+	DocumentRepository.layerWithoutDependencies,
+	OcrRunRepository.layerWithoutDependencies
 ).pipe(Layer.provide(DatabaseLive));
 
 const ServiceDependenciesLive = Layer.merge(
-	Layer.merge(PersistenceLive, OcrService.fakeLayer),
+	Layer.merge(PersistenceLive, OcrService.taggunLayer),
 	FileLifecycleService.layer
 );
 

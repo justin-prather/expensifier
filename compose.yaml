@@ -2,7 +2,7 @@ services:
   expensifier:
     build:
       context: .
-    image: expensifier:phase-three
+    image: expensifier:phase-four
     container_name: expensifier
     restart: unless-stopped
     ports:
@@ -12,5 +12,6 @@ services:
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?Set BETTER_AUTH_SECRET in .env}
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
       ORIGIN: ${ORIGIN:-http://localhost:3000}
+      TAGGUN_API_KEY: ${TAGGUN_API_KEY:-}
     volumes:
       - ${DOCKER_DATA_ROOT:-./data}:/data

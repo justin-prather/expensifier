@@ -21,6 +21,11 @@ export interface RuntimeConfig {
 	readonly intakeScanIntervalMilliseconds: number;
 	readonly jobPollIntervalMilliseconds: number;
 	readonly jobMaxAttempts: number;
+	readonly taggunApiKey: string | null;
+	readonly taggunEndpoint: string;
+	readonly ocrTimeoutMilliseconds: number;
+	readonly ocrMaxFileBytes: number;
+	readonly ocrMaxResponseBytes: number;
 }
 
 function isWithin(root: string, candidate: string): boolean {
@@ -54,6 +59,12 @@ function validHttpUrl(value: string, name: string): string {
 	}
 
 	return url.toString().replace(/\/$/, '');
+}
+
+function validHttpsUrl(value: string, name: string): string {
+	const url = validHttpUrl(value, name);
+	if (!url.startsWith('https://')) throw new Error(`${name} must use https`);
+	return url;
 }
 
 function integerSetting(
@@ -156,7 +167,30 @@ function parseRuntimeConfig(
 			'JOB_POLL_INTERVAL_MILLISECONDS',
 			100
 		),
-		jobMaxAttempts: integerSetting(environment.JOB_MAX_ATTEMPTS, 3, 'JOB_MAX_ATTEMPTS', 1)
+		jobMaxAttempts: integerSetting(environment.JOB_MAX_ATTEMPTS, 3, 'JOB_MAX_ATTEMPTS', 1),
+		taggunApiKey: environment.TAGGUN_API_KEY?.trim() || null,
+		taggunEndpoint: validHttpsUrl(
+			environment.TAGGUN_ENDPOINT ?? 'https://api.taggun.io/api/receipt/v1/verbose/file',
+			'TAGGUN_ENDPOINT'
+		),
+		ocrTimeoutMilliseconds: integerSetting(
+			environment.OCR_TIMEOUT_MILLISECONDS,
+			30_000,
+			'OCR_TIMEOUT_MILLISECONDS',
+			1000
+		),
+		ocrMaxFileBytes: integerSetting(
+			environment.OCR_MAX_FILE_BYTES,
+			20_000_000,
+			'OCR_MAX_FILE_BYTES',
+			1
+		),
+		ocrMaxResponseBytes: integerSetting(
+			environment.OCR_MAX_RESPONSE_BYTES,
+			5_000_000,
+			'OCR_MAX_RESPONSE_BYTES',
+			1
+		)
 	};
 }
 

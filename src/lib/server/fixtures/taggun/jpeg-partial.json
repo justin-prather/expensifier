@@ -1,0 +1,5 @@
+{
+	"merchantName": { "data": "Corner Cafe", "confidenceLevel": 0.89 },
+	"date": { "data": "2026-08-14", "confidenceLevel": 0.81 },
+	"totalAmount": { "data": 18.2, "confidenceLevel": 0.96, "currencyCode": "CAD" }
+}

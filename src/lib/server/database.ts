@@ -2,7 +2,7 @@ import { SqliteClient, SqliteMigrator } from '@effect/sql-sqlite-bun';
 import { Effect, Layer } from 'effect';
 import { SqlClient } from 'effect/unstable/sql';
 
-import { appDatabasePath, ensureDatabaseDirectory } from './config';
+import { appDatabasePath, ensureDatabaseDirectory, runtimeConfig } from './config';
 
 const migrations = SqliteMigrator.fromRecord({
 	'0001_create_jobs': Effect.gen(function* () {
@@ -74,6 +74,47 @@ const migrations = SqliteMigrator.fromRecord({
 			WHERE related_entity_id IS NOT NULL AND type = 'intake_document'
 		`;
 		yield* sql`CREATE INDEX jobs_eligible ON jobs (status, next_attempt_at, created_at)`;
+	}),
+	'0004_create_ocr_runs': Effect.gen(function* () {
+		const sql = yield* SqlClient.SqlClient;
+		yield* sql`ALTER TABLE documents ADD COLUMN ocr_enqueued_at TEXT`;
+		yield* sql`
+			CREATE TABLE ocr_runs (
+				id TEXT PRIMARY KEY,
+				document_id TEXT NOT NULL REFERENCES documents(id),
+				job_id TEXT NOT NULL REFERENCES jobs(id),
+				provider TEXT NOT NULL,
+				provider_version TEXT NOT NULL,
+				attempt_number INTEGER NOT NULL,
+				status TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed')),
+				raw_response_json TEXT,
+				normalized_result_json TEXT,
+				error_code TEXT,
+				error_summary TEXT,
+				started_at TEXT NOT NULL,
+				completed_at TEXT
+			)
+		`;
+		yield* sql`CREATE INDEX ocr_runs_document_started ON ocr_runs (document_id, started_at)`;
+		yield* sql`CREATE UNIQUE INDEX ocr_runs_job_attempt ON ocr_runs (job_id, started_at)`;
+		yield* sql`CREATE UNIQUE INDEX ocr_runs_document_attempt ON ocr_runs (document_id, attempt_number)`;
+
+		const now = new Date().toISOString();
+		const existing = yield* sql<{ readonly id: string }>`
+			SELECT id FROM documents WHERE status = 'processing' AND ocr_enqueued_at IS NULL
+		`;
+		for (const document of existing) {
+			yield* sql`
+				INSERT INTO jobs (
+					id, type, status, related_entity_id, attempt_count, max_attempts,
+					next_attempt_at, created_at, updated_at
+				) VALUES (
+					${crypto.randomUUID()}, 'ocr_document', 'pending', ${document.id},
+					0, ${runtimeConfig.jobMaxAttempts}, ${now}, ${now}, ${now}
+				)
+			`;
+			yield* sql`UPDATE documents SET ocr_enqueued_at = ${now}, updated_at = ${now} WHERE id = ${document.id}`;
+		}
 	})
 });
 

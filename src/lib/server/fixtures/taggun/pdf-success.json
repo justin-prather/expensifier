@@ -1,0 +1,19 @@
+{
+	"merchantName": { "data": "North Market", "confidenceLevel": 0.98 },
+	"date": { "data": "2026-08-12", "confidenceLevel": 0.94 },
+	"totalAmount": { "data": 37.45, "confidenceLevel": 0.99, "currencyCode": "CAD" },
+	"taxAmount": { "data": 4.31, "confidenceLevel": 0.91 },
+	"entities": {
+		"productLineItems": [
+			{
+				"confidenceLevel": 0.88,
+				"data": {
+					"name": { "data": "Office supplies" },
+					"quantity": { "data": 1 },
+					"unitPrice": { "data": 33.14 },
+					"totalPrice": { "data": 33.14 }
+				}
+			}
+		]
+	}
+}

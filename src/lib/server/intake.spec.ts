@@ -13,6 +13,7 @@ import { FileLifecycleService } from './files';
 import { IntakeService } from './intake';
 import { JobRepository, JobService } from './jobs';
 import { OcrService } from './ocr';
+import { OcrRunRepository } from './ocr-runs';
 
 const temporaryRoots: Array<string> = [];
 const pdfFixture = Buffer.from('%PDF-1.4\n% Expensifier sanitized fixture\n');
@@ -50,9 +51,10 @@ function makeStableConfig(milliseconds: number): RuntimeConfig {
 }
 
 function makeTestLayer(config: RuntimeConfig) {
-	const persistence = Layer.merge(
+	const persistence = Layer.mergeAll(
 		JobRepository.layerWithoutDependencies,
-		DocumentRepository.layerWithoutDependencies
+		DocumentRepository.layerWithoutDependencies,
+		OcrRunRepository.layerWithoutDependencies
 	).pipe(Layer.provide(makeDatabaseLayer(':memory:')));
 	const dependencies = Layer.merge(
 		Layer.merge(persistence, FileLifecycleService.layerFor(config)),

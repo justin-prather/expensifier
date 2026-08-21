@@ -7,9 +7,10 @@ import { DocumentRepository } from './documents';
 import { FileLifecycleService } from './files';
 import { logOperationalEvent } from './logger';
 import { OcrService } from './ocr';
+import { OcrRunRepository } from './ocr-runs';
 
 const JobStatus = Schema.Literals(['pending', 'running', 'succeeded', 'failed']);
-const JobType = Schema.Literals(['fake_ocr', 'intake_document']);
+const JobType = Schema.Literals(['fake_ocr', 'intake_document', 'ocr_document']);
 
 export class Job extends Schema.Class<Job>('Job')({
 	id: Schema.String,
@@ -40,6 +41,7 @@ export class JobRepository extends Context.Service<
 	JobRepository,
 	{
 		readonly createFakeOcr: Effect.Effect<Job>;
+		readonly createOcr: (documentId: string) => Effect.Effect<Job>;
 		readonly list: Effect.Effect<ReadonlyArray<Job>>;
 		readonly claimNext: Effect.Effect<Job | null>;
 		readonly complete: (id: string, resultJson?: string) => Effect.Effect<Job>;
@@ -75,6 +77,30 @@ export class JobRepository extends Context.Service<
 				`;
 				return yield* findById(id);
 			}).pipe(Effect.orDie, Effect.withSpan('JobRepository.createFakeOcr'));
+
+			const createOcr = Effect.fn('JobRepository.createOcr')(function* (documentId: string) {
+				return yield* sql.withTransaction(
+					Effect.gen(function* () {
+						const active = yield* sql<{ readonly id: string }>`
+							SELECT id FROM jobs WHERE related_entity_id = ${documentId}
+								AND type = 'ocr_document' AND status IN ('pending', 'running') LIMIT 1
+						`;
+						if (active[0]) return yield* Effect.die(new Error('OCR is already pending'));
+						const now = new Date().toISOString();
+						const id = crypto.randomUUID();
+						yield* sql`
+							INSERT INTO jobs (
+								id, type, status, related_entity_id, attempt_count, max_attempts,
+								next_attempt_at, created_at, updated_at
+							) VALUES (
+								${id}, 'ocr_document', 'pending', ${documentId}, 0,
+								${runtimeConfig.jobMaxAttempts}, ${now}, ${now}, ${now}
+							)
+						`;
+						return yield* findById(id);
+					})
+				);
+			}, Effect.orDie);
 
 			const list = sql<Job>`
 				SELECT ${sql.unsafe(jobColumns)} FROM jobs ORDER BY created_at DESC
@@ -141,7 +167,18 @@ export class JobRepository extends Context.Service<
 					UPDATE jobs SET status = 'pending', error_code = 'interrupted',
 						error_summary = 'Work was interrupted and will resume', next_attempt_at = ${now},
 						updated_at = ${now}
-					WHERE status = 'running'
+					WHERE status = 'running' AND type != 'ocr_document' AND attempt_count < max_attempts
+				`;
+				yield* sql`
+					UPDATE jobs SET status = 'failed',
+						error_code = CASE WHEN type = 'ocr_document' THEN 'outcome_unknown' ELSE 'interrupted' END,
+						error_summary = CASE
+							WHEN type = 'ocr_document' THEN 'OCR was interrupted with an unknown provider outcome'
+							ELSE 'Work was interrupted at the attempt limit'
+						END,
+						next_attempt_at = NULL,
+						completed_at = ${now}, updated_at = ${now}
+					WHERE status = 'running' AND (type = 'ocr_document' OR attempt_count >= max_attempts)
 				`;
 			}).pipe(Effect.orDie, Effect.withSpan('JobRepository.recoverInterrupted'));
 
@@ -152,6 +189,7 @@ export class JobRepository extends Context.Service<
 
 			return JobRepository.of({
 				createFakeOcr,
+				createOcr,
 				list,
 				claimNext,
 				complete,
@@ -170,6 +208,7 @@ export class JobService extends Context.Service<
 	{
 		readonly start: Effect.Effect<void>;
 		readonly enqueueFakeOcr: Effect.Effect<Job>;
+		readonly retryOcr: (documentId: string) => Effect.Effect<Job>;
 		readonly recoverAndProcess: Effect.Effect<void>;
 		readonly processAvailable: Effect.Effect<void>;
 		readonly list: Effect.Effect<ReadonlyArray<Job>>;
@@ -183,6 +222,7 @@ export class JobService extends Context.Service<
 			const documents = yield* DocumentRepository;
 			const files = yield* FileLifecycleService;
 			const ocr = yield* OcrService;
+			const ocrRuns = yield* OcrRunRepository;
 			let timer: ReturnType<typeof setInterval> | undefined;
 			let processing = false;
 
@@ -238,21 +278,48 @@ export class JobService extends Context.Service<
 					}
 					yield* documents.markManaged(document.id, moved.success);
 					yield* jobs.complete(job.id);
-				} else {
-					const outcome = yield* Effect.result(ocr.process(job.id));
+				} else if (job.type === 'ocr_document') {
+					const document = job.relatedEntityId
+						? yield* documents.findById(job.relatedEntityId)
+						: null;
+					if (!document) {
+						yield* jobs.fail(job, 'document_missing', 'Related document was not found', false);
+						return;
+					}
+					const run = yield* ocrRuns.start(document.id, job.id, ocr.provider, ocr.providerVersion);
+					const outcome = yield* Effect.result(
+						ocr.process({
+							id: document.id,
+							absolutePath: files.absolutePath(document),
+							mimeType: document.mimeType,
+							originalFilename: document.originalFilename,
+							byteSize: document.byteSize,
+							contentHash: document.contentHash
+						})
+					);
 					if (Result.isFailure(outcome)) {
-						const updated = yield* jobs.fail(job, 'fake_ocr_failed', 'OCR probe failed', false);
+						const updatedStatus = yield* ocrRuns.fail(
+							run.id,
+							job,
+							outcome.failure.code,
+							outcome.failure.summary,
+							outcome.failure.rawResponseJson,
+							outcome.failure.retryable
+						);
 						logOperationalEvent('warn', 'job_failed', {
 							component: 'jobs',
 							recordId: job.id,
 							jobType: job.type,
-							status: updated.status,
+							status: updatedStatus,
 							attemptCount: job.attemptCount,
-							errorCode: 'fake_ocr_failed'
+							errorCode: outcome.failure.code
 						});
 						return;
 					}
-					yield* jobs.complete(job.id, JSON.stringify(outcome.success));
+					const normalizedJson = JSON.stringify(outcome.success.normalized);
+					yield* ocrRuns.succeed(run.id, job.id, outcome.success.rawResponseJson, normalizedJson);
+				} else {
+					yield* jobs.complete(job.id);
 				}
 
 				logOperationalEvent('info', 'job_succeeded', {
@@ -301,7 +368,18 @@ export class JobService extends Context.Service<
 					yield* processAvailable;
 					return (yield* jobs.list).find((candidate) => candidate.id === job.id) ?? job;
 				}),
+				retryOcr: (documentId) =>
+					Effect.gen(function* () {
+						const document = yield* documents.findById(documentId);
+						if (!document || document.status !== 'processing') {
+							return yield* Effect.die(new Error('Document is not available for OCR'));
+						}
+						const job = yield* jobs.createOcr(documentId);
+						yield* processAvailable;
+						return job;
+					}),
 				recoverAndProcess: Effect.gen(function* () {
+					yield* ocrRuns.recoverInterrupted;
 					yield* jobs.recoverInterrupted;
 					yield* processAvailable;
 				}),
