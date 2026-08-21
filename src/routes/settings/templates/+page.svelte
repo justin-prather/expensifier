@@ -74,6 +74,10 @@
 					required
 					class="mt-2 w-full border-2 border-ink bg-paper px-4 py-3 font-mono text-sm"
 				/>
+				<span class="mt-2 block text-xs leading-5 text-ink/60">
+					Billable expenses always go to <code>processed/billable</code> first; this template controls
+					non-billable filing.
+				</span>
 			</label>
 			<button
 				class="mt-6 bg-coral px-5 py-3.5 text-sm font-extrabold tracking-[0.1em] uppercase shadow-[4px_4px_0_#f5f1e8] hover:-translate-y-0.5"

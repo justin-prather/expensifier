@@ -45,6 +45,18 @@
 	let refreshingPreview = $state(false);
 	let dismissedAiSuggestionId = $state<string | null>(null);
 	let appliedAiSuggestionId = $state<string | null>(null);
+	let retryingClassification = $state(false);
+
+	async function refreshClassification(previousRunId: string | undefined) {
+		for (let attempt = 0; attempt < 30; attempt += 1) {
+			// oxlint-disable-next-line no-await-in-loop -- polling must wait between refreshes.
+			await new Promise((resolve) => setTimeout(resolve, 1000));
+			// oxlint-disable-next-line no-await-in-loop -- each refresh determines whether polling continues.
+			await invalidateAll();
+			const run = data.classification.run;
+			if (run?.id !== previousRunId && run?.status !== 'running') return;
+		}
+	}
 
 	function emptyLineItem(): LineItemRow {
 		return {
@@ -87,9 +99,14 @@
 	const lineTotal = $derived(
 		lineItems.reduce((sum, row) => sum + (rowEffectiveGross(row) ?? 0), 0)
 	);
+	const taxComponentTotal = $derived(
+		taxComponents.reduce((sum, component) => sum + (parseAmountToMinor(component.amount) ?? 0), 0)
+	);
 	const totalMinor = $derived(total.trim() === '' ? null : parseAmountToMinor(total));
 	const balanced = $derived(
-		totalMinor !== null && lineTotal === totalMinor && lineItems.length > 0
+		totalMinor !== null &&
+			(lineTotal === totalMinor || lineTotal + taxComponentTotal === totalMinor) &&
+			lineItems.length > 0
 	);
 
 	function addLineItem() {
@@ -102,11 +119,21 @@
 	}
 
 	function addTaxComponent() {
-		taxComponents = [...taxComponents, { label: 'GST', amount: '', ratePercent: '' }];
+		taxComponents = [...taxComponents, { label: 'GST', amount: gstAmount(), ratePercent: '5' }];
 	}
 
 	function removeTaxComponent(index: number) {
 		taxComponents = taxComponents.filter((_, i) => i !== index);
+	}
+
+	function gstAmount(): string {
+		return totalMinor === null ? '' : (Math.round(totalMinor * 0.05) / 100).toFixed(2);
+	}
+
+	function prefillTaxComponent(index: number) {
+		if (taxComponents[index]?.label !== 'GST') return;
+		taxComponents[index]!.ratePercent = '5';
+		taxComponents[index]!.amount = gstAmount();
 	}
 
 	type OcrField = { value: string | null; confidence: number | null; source: string };
@@ -453,10 +480,26 @@
 						AI classification unavailable
 					</p>
 					<p class="mt-2 text-sm">{data.classification.run.errorSummary}</p>
-					<form method="POST" action="?/retry-classification" class="mt-3">
+					<form
+						method="POST"
+						action="?/retry-classification"
+						class="mt-3"
+						use:enhance={() => {
+							retryingClassification = true;
+							const previousRunId = data.classification.run?.id;
+							return async ({ result, update }) => {
+								await update();
+								if (result.type === 'success') await refreshClassification(previousRunId);
+								retryingClassification = false;
+							};
+						}}
+					>
 						<button
 							class="border border-ink px-3 py-1.5 font-mono text-xs font-bold uppercase hover:bg-ink hover:text-paper"
-							>Retry classification</button
+							disabled={retryingClassification}
+							>{retryingClassification
+								? 'Retrying classification...'
+								: 'Retry classification'}</button
 						>
 					</form>
 				</div>
@@ -579,9 +622,11 @@
 					<span
 						class={`px-2 py-1 font-mono text-xs font-bold uppercase ${balanced ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'}`}
 					>
-						{(lineTotal / 100).toFixed(2)} / {totalMinor !== null
-							? (totalMinor / 100).toFixed(2)
-							: '—'}
+						{(lineTotal / 100).toFixed(2)} lines
+						{#if taxComponentTotal > 0 && lineTotal !== totalMinor}
+							+ {(taxComponentTotal / 100).toFixed(2)} tax
+						{/if}
+						/ {totalMinor !== null ? (totalMinor / 100).toFixed(2) : '—'}
 						{balanced ? 'balanced' : 'unbalanced'}
 					</span>
 				</div>
@@ -726,6 +771,7 @@
 								<select
 									class="mt-1 w-full border border-ink bg-white px-2 py-1.5 text-sm font-normal"
 									bind:value={component.label}
+									onchange={() => prefillTaxComponent(index)}
 								>
 									{#each ['GST', 'HST', 'PST', 'QST', 'OTHER'] as label (label)}
 										<option value={label}>{label}</option>

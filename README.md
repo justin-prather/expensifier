@@ -127,16 +127,20 @@ Timeouts, rate limits, and provider outages use the bounded durable-job retry po
 
 Contract tests use sanitized Taggun response fixtures and do not consume live provider scans.
 
+Billable expenses are held in `processed/billable` when approved, regardless of the configured
+destination template, so they can be processed before month/year filing. The destination template
+continues to control non-billable receipts.
+
 ## AI Classification
 
 After successful OCR, a durable classification job first checks active deterministic vendor rules.
-Only unmatched expenses invoke the configured OpenAI Responses API Layer. The provider receives a
-new allow-listed object containing normalized OCR values/confidence and active payment-account,
-category, and client candidates; it never receives the document, filename, path, raw OCR response,
-or OCR source paths. Strict structured output is validated again against the supplied candidate IDs
-before a suggestion is stored.
+Only unmatched expenses invoke DeepSeek V4 Flash through OpenCode Zen's OpenAI-compatible Chat
+Completions endpoint. The provider receives a new allow-listed object containing normalized OCR
+values/confidence and active payment-account, category, and client candidates; it never receives the
+document, filename, path, raw OCR response, or OCR source paths. JSON output is validated locally
+against the required shape and supplied candidate IDs before a suggestion is stored.
 
-Set `CLASSIFICATION_API_KEY` to enable the production Layer. Missing credentials or provider failures
+Set `CLASSIFICATION_API_KEY` to an OpenCode Zen API key to enable the production Layer. Missing credentials or provider failures
 do not change local expense status or block manual review. Admins can inspect non-secret provider
 status at `/settings/integrations`; suggestions and explicit accepted, rejected, or replaced outcomes
 are retained in SQLite and audit history. See `docs/ai-provider-decision.md` for the candidate

@@ -127,6 +127,7 @@ export function renderFilename(template: string, values: TemplateValues): string
 
 export function renderDestination(template: string, values: TemplateValues): string {
 	validateTemplate(template);
+	if (values.billable) return 'processed/billable';
 	const rendered = renderTokens(template, values);
 	const segments = rendered
 		.split('/')

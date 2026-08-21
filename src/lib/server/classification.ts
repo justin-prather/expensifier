@@ -138,6 +138,10 @@ function parseSuggestion(
 
 function outputText(value: unknown): string | null {
 	const root = record(value);
+	if (Array.isArray(root.choices)) {
+		const content = record(record(root.choices[0]).message).content;
+		if (typeof content === 'string') return content;
+	}
 	if (typeof root.output_text === 'string') return root.output_text;
 	if (!Array.isArray(root.output)) return null;
 	for (const output of root.output) {
@@ -234,10 +238,10 @@ export class ClassificationService extends Context.Service<
 		return Layer.succeed(
 			ClassificationService,
 			ClassificationService.of({
-				provider: 'openai',
+				provider: 'opencode-zen',
 				model: config.classificationModel,
 				configured: !!config.classificationApiKey,
-				classify: Effect.fn('OpenAiClassification.classify')(function* (
+				classify: Effect.fn('OpenCodeZenClassification.classify')(function* (
 					request: ClassificationRequest
 				) {
 					if (!config.classificationApiKey) {
@@ -257,18 +261,18 @@ export class ClassificationService extends Context.Service<
 								},
 								body: JSON.stringify({
 									model: config.classificationModel,
-									store: false,
-									instructions:
-										'Classify the structured receipt fields using only supplied candidate IDs. Return null when evidence is insufficient. Never invent an ID.',
-									input: JSON.stringify(request),
-									text: {
-										format: {
-											type: 'json_schema',
-											name: 'expense_classification',
-											strict: true,
-											schema: responseSchema
-										}
-									}
+									messages: [
+										{
+											role: 'system',
+											content:
+												'Classify the structured receipt fields using only supplied candidate IDs. Return null for nullable fields when evidence is insufficient. Never invent an ID. Return only JSON matching this schema: ' +
+												JSON.stringify(responseSchema)
+										},
+										{ role: 'user', content: JSON.stringify(request) }
+									],
+									response_format: { type: 'json_object' },
+									thinking: { type: 'disabled' },
+									max_tokens: 1000
 								}),
 								signal: AbortSignal.timeout(config.classificationTimeoutMilliseconds)
 							}),
@@ -313,7 +317,7 @@ export class ClassificationService extends Context.Service<
 						return yield* new ClassificationError({
 							code: 'invalid_response',
 							summary: 'Classification provider returned an invalid structured suggestion',
-							retryable: false
+							retryable: true
 						});
 					}
 					return suggestion;
@@ -322,5 +326,5 @@ export class ClassificationService extends Context.Service<
 		);
 	}
 
-	static readonly openAiLayer = this.layerFor(runtimeConfig);
+	static readonly openCodeZenLayer = this.layerFor(runtimeConfig);
 }

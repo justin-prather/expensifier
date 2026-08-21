@@ -240,6 +240,7 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 		classification: {
 			run: classification.run
 				? {
+						id: classification.run.id,
 						status: classification.run.status,
 						provider: classification.run.provider,
 						model: classification.run.model,

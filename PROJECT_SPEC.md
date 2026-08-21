@@ -792,7 +792,8 @@ The first release is acceptable when:
 6. Identical content is flagged for review and never silently deleted or approved.
 7. Every expense requires explicit approval.
 8. Approval enforces all required fields and balanced categorization.
-9. Approved files use safe, configurable destination and filename templates.
+9. Approved files use safe, configurable destination and filename templates; billable files are
+   first held in the top-level processed billable folder before month/year filing.
 10. No approval can silently overwrite an existing destination file.
 11. Rejection moves the file to the rejected tree and retains its history.
 12. Reopening and reapproving preserves history and safely normalizes the processed file.

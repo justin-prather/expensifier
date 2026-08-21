@@ -44,7 +44,7 @@ const AdminServicesLive = Layer.merge(
 const ServiceDependenciesLive = Layer.merge(
 	Layer.merge(Layer.merge(PersistenceLive, OcrService.taggunLayer), FileLifecycleService.layer),
 	Layer.merge(
-		Layer.merge(ApprovalIntegrationService.layer, ClassificationService.openAiLayer),
+		Layer.merge(ApprovalIntegrationService.layer, ClassificationService.openCodeZenLayer),
 		AdminServicesLive
 	)
 );

@@ -83,6 +83,13 @@ describe('renderDestination', () => {
 		);
 	});
 
+	it('holds billable expenses before configured date-based filing', () => {
+		expect(renderDestination('processed/2026/08', { ...baseValues, billable: true })).toBe(
+			'processed/billable'
+		);
+		expect(renderDestination('processed/2026/08', baseValues)).toBe('processed/2026/08');
+	});
+
 	it('neutralizes traversal segments instead of escaping the managed root', () => {
 		const destination = renderDestination('{vendor}/receipts', { ...baseValues, vendor: '..' });
 		expect(destination).toBe('receipts');

@@ -50,7 +50,8 @@ describe('runtime configuration', () => {
 	it('keeps classification credentials optional and requires a secure provider endpoint', () => {
 		const config = loadRuntimeConfig({});
 		expect(config.classificationApiKey).toBeNull();
-		expect(config.classificationModel).toBe('gpt-4.1-mini');
+		expect(config.classificationEndpoint).toBe('https://opencode.ai/zen/v1/chat/completions');
+		expect(config.classificationModel).toBe('deepseek-v4-flash');
 		expect(() =>
 			loadRuntimeConfig({ CLASSIFICATION_ENDPOINT: 'http://classification.example.test/v1' })
 		).toThrow('CLASSIFICATION_ENDPOINT must use https');

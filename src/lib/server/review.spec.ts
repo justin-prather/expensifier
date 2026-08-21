@@ -260,6 +260,43 @@ describe('review flows', () => {
 		}).pipe(Effect.provide(layer));
 	});
 
+	it.live('balances net line items with separately itemized tax', () => {
+		const { config, layer } = makeReviewLayer();
+		return Effect.gen(function* () {
+			const expenses = yield* ExpenseRepository;
+			yield* intakeOneReceipt(config.directories.inbox);
+			const refs = yield* expenses.referenceData;
+			const outcome = yield* Effect.result(
+				validateDraft(
+					draftInput({
+						paymentAccountId: refs.paymentAccounts[0]!.id,
+						total: '11.30',
+						lineItems: [
+							{
+								description: 'Taxable item',
+								quantity: '1',
+								unitPrice: '10.00',
+								netAmount: '10.00',
+								taxAmount: '',
+								grossAmount: '',
+								categoryId: refs.categories[0]!.id
+							}
+						],
+						taxComponents: [{ label: 'HST', amount: '1.30', ratePercent: '13' }]
+					}),
+					refs,
+					true
+				)
+			);
+
+			expect(Result.isSuccess(outcome)).toBe(true);
+			if (Result.isSuccess(outcome)) {
+				expect(outcome.success.lineItems[0]?.grossMinor).toBe(1000);
+				expect(outcome.success.taxComponents[0]?.amountMinor).toBe(130);
+			}
+		}).pipe(Effect.provide(layer));
+	});
+
 	it.live('blocks approval when the destination already exists', () => {
 		const { config, layer } = makeReviewLayer();
 		return Effect.gen(function* () {

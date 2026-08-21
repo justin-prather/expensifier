@@ -198,10 +198,10 @@ function parseRuntimeConfig(
 		),
 		classificationApiKey: environment.CLASSIFICATION_API_KEY?.trim() || null,
 		classificationEndpoint: validHttpsUrl(
-			environment.CLASSIFICATION_ENDPOINT ?? 'https://api.openai.com/v1/responses',
+			environment.CLASSIFICATION_ENDPOINT ?? 'https://opencode.ai/zen/v1/chat/completions',
 			'CLASSIFICATION_ENDPOINT'
 		),
-		classificationModel: environment.CLASSIFICATION_MODEL?.trim() || 'gpt-4.1-mini',
+		classificationModel: environment.CLASSIFICATION_MODEL?.trim() || 'deepseek-v4-flash',
 		classificationTimeoutMilliseconds: integerSetting(
 			environment.CLASSIFICATION_TIMEOUT_MILLISECONDS,
 			20_000,

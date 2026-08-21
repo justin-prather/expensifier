@@ -33,14 +33,20 @@ const request: ClassificationRequest = {
 const invalidIdFetch: ClassificationFetch = async () =>
 	new Response(
 		JSON.stringify({
-			output_text: JSON.stringify({
-				paymentAccountId: 'invented-account',
-				categoryId: null,
-				clientId: null,
-				billable: null,
-				rationale: 'Invalid fixture',
-				confidence: 0.2
-			})
+			choices: [
+				{
+					message: {
+						content: JSON.stringify({
+							paymentAccountId: 'invented-account',
+							categoryId: null,
+							clientId: null,
+							billable: null,
+							rationale: 'Invalid fixture',
+							confidence: 0.2
+						})
+					}
+				}
+			]
 		})
 	);
 
@@ -74,20 +80,26 @@ describe('AI classification boundary', () => {
 		let outbound: Record<string, unknown> | null = null;
 		const config = loadRuntimeConfig({
 			CLASSIFICATION_API_KEY: 'fixture-key',
-			CLASSIFICATION_ENDPOINT: 'https://classification.example.test/v1/responses'
+			CLASSIFICATION_ENDPOINT: 'https://classification.example.test/v1/chat/completions'
 		});
 		const fetchImplementation: ClassificationFetch = async (_input, init) => {
 			outbound = JSON.parse(String(init?.body));
 			return new Response(
 				JSON.stringify({
-					output_text: JSON.stringify({
-						paymentAccountId: 'account-1',
-						categoryId: 'category-1',
-						clientId: null,
-						billable: false,
-						rationale: 'The normalized line-item evidence indicates office supplies.',
-						confidence: 0.87
-					})
+					choices: [
+						{
+							message: {
+								content: JSON.stringify({
+									paymentAccountId: 'account-1',
+									categoryId: 'category-1',
+									clientId: null,
+									billable: false,
+									rationale: 'The normalized line-item evidence indicates office supplies.',
+									confidence: 0.87
+								})
+							}
+						}
+					]
 				}),
 				{ status: 200 }
 			);
@@ -95,11 +107,15 @@ describe('AI classification boundary', () => {
 		return Effect.gen(function* () {
 			const classifier = yield* ClassificationService;
 			const suggestion = yield* classifier.classify(request);
-			const providerInput = JSON.parse(String(outbound?.input));
+			const messages = outbound?.messages as ReadonlyArray<{ readonly content: string }>;
+			const providerInput = JSON.parse(messages[1]!.content);
 
 			expect(suggestion.categoryId).toBe('category-1');
-			expect(outbound?.model).toBe('gpt-4.1-mini');
-			expect(outbound?.store).toBe(false);
+			expect(outbound?.model).toBe('deepseek-v4-flash');
+			expect(outbound?.response_format).toEqual({ type: 'json_object' });
+			expect(outbound?.thinking).toEqual({ type: 'disabled' });
+			expect(outbound?.max_tokens).toBe(1000);
+			expect(messages[0]?.content).toContain('Return only JSON matching this schema');
 			expect(providerInput).toEqual(request);
 			expect(JSON.stringify(outbound)).not.toContain('filename');
 			expect(JSON.stringify(outbound)).not.toContain('rawResponse');
@@ -109,21 +125,24 @@ describe('AI classification boundary', () => {
 	it.live('rejects provider IDs that were not supplied as candidates', () => {
 		const config = loadRuntimeConfig({
 			CLASSIFICATION_API_KEY: 'fixture-key',
-			CLASSIFICATION_ENDPOINT: 'https://classification.example.test/v1/responses'
+			CLASSIFICATION_ENDPOINT: 'https://classification.example.test/v1/chat/completions'
 		});
 		return Effect.gen(function* () {
 			const classifier = yield* ClassificationService;
 			const result = yield* Effect.result(classifier.classify(request));
 
 			expect(Result.isFailure(result)).toBe(true);
-			if (Result.isFailure(result)) expect(result.failure.code).toBe('invalid_response');
+			if (Result.isFailure(result)) {
+				expect(result.failure.code).toBe('invalid_response');
+				expect(result.failure.retryable).toBe(true);
+			}
 		}).pipe(Effect.provide(ClassificationService.layerFor(config, invalidIdFetch)));
 	});
 
 	it.live('stops reading provider responses at the configured byte limit', () => {
 		const config = loadRuntimeConfig({
 			CLASSIFICATION_API_KEY: 'fixture-key',
-			CLASSIFICATION_ENDPOINT: 'https://classification.example.test/v1/responses',
+			CLASSIFICATION_ENDPOINT: 'https://classification.example.test/v1/chat/completions',
 			CLASSIFICATION_MAX_RESPONSE_BYTES: '8'
 		});
 		return Effect.gen(function* () {

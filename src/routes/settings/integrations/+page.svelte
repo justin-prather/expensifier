@@ -69,7 +69,7 @@
 				</li>
 			</ul>
 			<a
-				href="https://github.com/openai/openai-openapi"
+				href="https://opencode.ai/docs/zen/"
 				class="mt-6 inline-block font-mono text-xs font-bold text-forest uppercase hover:text-coral"
 				>Provider API reference →</a
 			>

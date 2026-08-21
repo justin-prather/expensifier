@@ -170,13 +170,6 @@ export function validateDraft(
 			});
 		}
 
-		if (strict && Object.keys(fieldErrors).every((key) => !key.startsWith('lineItems.'))) {
-			const balanced = lineItems.reduce((total, item) => total + (item.grossMinor ?? 0), 0);
-			if (totalMinor !== null && balanced !== totalMinor) {
-				fieldErrors.lineItems = `Line items total ${(balanced / 100).toFixed(2)} but expense total is ${(totalMinor / 100).toFixed(2)}`;
-			}
-		}
-
 		const taxComponents: {
 			label: 'GST' | 'HST' | 'PST' | 'QST' | 'OTHER';
 			amountMinor: number;
@@ -217,6 +210,20 @@ export function validateDraft(
 		}
 		if (strict && totalMinor !== null && taxTotal > totalMinor) {
 			fieldErrors.taxComponents = 'Tax components exceed the expense total';
+		}
+
+		if (
+			strict &&
+			totalMinor !== null &&
+			Object.keys(fieldErrors).every(
+				(key) => !key.startsWith('lineItems.') && !key.startsWith('taxComponents.')
+			)
+		) {
+			const lineTotal = lineItems.reduce((total, item) => total + (item.grossMinor ?? 0), 0);
+			if (lineTotal !== totalMinor && lineTotal + taxTotal !== totalMinor) {
+				const taxSuffix = taxTotal > 0 ? ` plus separate tax ${(taxTotal / 100).toFixed(2)}` : '';
+				fieldErrors.lineItems = `Line items total ${(lineTotal / 100).toFixed(2)}${taxSuffix} but expense total is ${(totalMinor / 100).toFixed(2)}`;
+			}
 		}
 
 		if (Object.keys(fieldErrors).length > 0) {

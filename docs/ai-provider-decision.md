@@ -4,10 +4,11 @@ Decision date: 2026-08-21
 
 ## Decision
 
-Expensifier uses OpenAI's Responses API with strict JSON Schema output. The default model is
-`gpt-4.1-mini`; deployments may override the model and endpoint through environment variables.
-The provider is replaceable through `ClassificationService` and no provider types cross that
-service boundary.
+Expensifier uses DeepSeek V4 Flash through OpenCode Zen's OpenAI-compatible Chat Completions API. The
+default model is `deepseek-v4-flash`; deployments may override the model and endpoint through
+environment variables. DeepSeek JSON mode guarantees a JSON object, while Expensifier enforces the
+required schema and candidate IDs locally. The provider remains replaceable through
+`ClassificationService`, and no provider types cross that service boundary.
 
 ## Evaluation method
 
@@ -22,14 +23,15 @@ before changing the configured model.
 
 | Candidate                                   | Accuracy fit | Structured output | Privacy controls | Relative cost | Relative latency | Integration score |
 | ------------------------------------------- | -----------: | ----------------: | ---------------: | ------------: | ---------------: | ----------------: |
+| OpenCode Zen / DeepSeek V4 Flash            |            4 |                 4 |                5 |             5 |                5 |                 5 |
 | OpenAI Responses API / GPT-4.1 mini         |            4 |                 5 |                4 |             4 |                4 |                 5 |
 | Anthropic Messages API / Claude Haiku class |            4 |                 4 |                4 |             4 |                4 |                 4 |
 | Google Gemini API / Flash class             |            4 |                 4 |                4 |             5 |                5 |                 4 |
 
-OpenAI was selected because strict JSON Schema output minimizes invalid candidate IDs and the
-Responses API supports a small provider Layer without adding an SDK. Anthropic and Gemini remain
-viable replacement Layers if fixture accuracy, deployment policy, cost, or measured latency favors
-them later.
+DeepSeek V4 Flash through OpenCode Zen was selected for its low cost, low latency, JSON output mode,
+and Zen's stated zero-retention policy for this model. The integration uses direct `fetch` without an
+SDK. OpenAI, Anthropic, and Gemini remain viable replacement Layers if fixture accuracy, deployment
+policy, cost, or measured latency favors them later.
 
 ## Privacy boundary
 
@@ -42,7 +44,7 @@ them later.
 The original document, filename, filesystem path, raw OCR JSON, OCR source paths, credentials, and
 audit history are impossible to reach from `ClassificationService.classify`'s input type. Provider
 responses are accepted only when every non-null ID exists in the supplied candidate set. Requests
-set `store: false` so Responses API output is not retained for later retrieval by the provider.
+use DeepSeek JSON mode and are covered by OpenCode Zen's stated zero-retention policy.
 
 ## Operations
 

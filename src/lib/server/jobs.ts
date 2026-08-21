@@ -562,7 +562,7 @@ export class JobService extends Context.Service<
 							return yield* Effect.die(new Error('Expense is not available for classification'));
 						}
 						const state = yield* classifications.latestForExpense(expenseId);
-						if (state.run?.status !== 'failed') {
+						if (!state.run || state.run.status === 'succeeded') {
 							return yield* Effect.die(
 								new Error('Expense does not have a failed classification to retry')
 							);

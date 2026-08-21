@@ -7,7 +7,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 	requirePermission(locals.user, 'integrations:manage');
 	return {
 		classification: {
-			provider: 'OpenAI',
+			provider: 'OpenCode Zen',
 			model: runtimeConfig.classificationModel,
 			configured: !!runtimeConfig.classificationApiKey,
 			endpointHost: new URL(runtimeConfig.classificationEndpoint).host,
