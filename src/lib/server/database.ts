@@ -115,6 +115,144 @@ const migrations = SqliteMigrator.fromRecord({
 			`;
 			yield* sql`UPDATE documents SET ocr_enqueued_at = ${now}, updated_at = ${now} WHERE id = ${document.id}`;
 		}
+	}),
+	'0005_create_review_and_audit': Effect.gen(function* () {
+		const sql = yield* SqlClient.SqlClient;
+		yield* sql`
+			CREATE TABLE payment_accounts (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL UNIQUE,
+				active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+				created_at TEXT NOT NULL
+			)
+		`;
+		yield* sql`
+			CREATE TABLE expense_categories (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL UNIQUE,
+				active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+				created_at TEXT NOT NULL
+			)
+		`;
+		yield* sql`
+			CREATE TABLE clients (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL UNIQUE,
+				active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+				created_at TEXT NOT NULL
+			)
+		`;
+		yield* sql`
+			CREATE TABLE expenses (
+				id TEXT PRIMARY KEY,
+				document_id TEXT NOT NULL UNIQUE REFERENCES documents(id),
+				status TEXT NOT NULL CHECK (status IN ('processing', 'needs_review', 'approved', 'rejected')),
+				vendor TEXT,
+				transaction_date TEXT,
+				total_minor INTEGER,
+				currency TEXT CHECK (currency IN ('CAD', 'USD', 'EUR')),
+				notes TEXT,
+				billable INTEGER NOT NULL DEFAULT 0 CHECK (billable IN (0, 1)),
+				client_id TEXT REFERENCES clients(id),
+				payment_account_id TEXT REFERENCES payment_accounts(id),
+				rejection_reason TEXT,
+				pending_move_json TEXT,
+				approved_at TEXT,
+				approved_by TEXT,
+				rejected_at TEXT,
+				rejected_by TEXT,
+				reopened_at TEXT,
+				reopened_by TEXT,
+				created_at TEXT NOT NULL,
+				updated_at TEXT NOT NULL
+			)
+		`;
+		yield* sql`CREATE INDEX expenses_status_updated ON expenses (status, updated_at)`;
+		yield* sql`
+			CREATE TABLE expense_line_items (
+				id TEXT PRIMARY KEY,
+				expense_id TEXT NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
+				position INTEGER NOT NULL,
+				description TEXT NOT NULL,
+				quantity TEXT,
+				unit_price_minor INTEGER,
+				net_minor INTEGER,
+				tax_minor INTEGER,
+				gross_minor INTEGER,
+				category_id TEXT REFERENCES expense_categories(id),
+				provenance TEXT NOT NULL CHECK (provenance IN ('ocr', 'manual')),
+				created_at TEXT NOT NULL,
+				updated_at TEXT NOT NULL
+			)
+		`;
+		yield* sql`CREATE INDEX expense_line_items_expense_position ON expense_line_items (expense_id, position)`;
+		yield* sql`
+			CREATE TABLE expense_tax_components (
+				id TEXT PRIMARY KEY,
+				expense_id TEXT NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
+				label TEXT NOT NULL CHECK (label IN ('GST', 'HST', 'PST', 'QST', 'OTHER')),
+				amount_minor INTEGER NOT NULL,
+				rate_percent TEXT,
+				created_at TEXT NOT NULL,
+				updated_at TEXT NOT NULL
+			)
+		`;
+		yield* sql`CREATE INDEX expense_tax_components_expense ON expense_tax_components (expense_id)`;
+		yield* sql`
+			CREATE TABLE audit_events (
+				id TEXT PRIMARY KEY,
+				actor_user_id TEXT,
+				actor_label TEXT NOT NULL,
+				action TEXT NOT NULL,
+				entity_type TEXT NOT NULL,
+				entity_id TEXT NOT NULL,
+				data_json TEXT,
+				created_at TEXT NOT NULL
+			)
+		`;
+		yield* sql`CREATE INDEX audit_events_entity_created ON audit_events (entity_type, entity_id, created_at)`;
+		yield* sql`CREATE INDEX audit_events_created ON audit_events (created_at)`;
+		yield* sql`
+			CREATE TABLE app_settings (
+				key TEXT PRIMARY KEY,
+				value TEXT NOT NULL,
+				updated_at TEXT NOT NULL
+			)
+		`;
+
+		const now = new Date().toISOString();
+		const accounts = [
+			'11190-WISE-USD',
+			'11200-WISE-EUR',
+			'8113-CIBC-USD',
+			'11180-WISE-CAD',
+			'0740-CIBC-USD-VISA',
+			'1408-CIBC-CAD-OWNER-COMP',
+			'1300-CIBC-CAD-PROFIT',
+			'9211-CIBC-CAD-OPEX',
+			'6442-CIBC-CAD-VISA'
+		];
+		for (const name of accounts) {
+			yield* sql`
+				INSERT INTO payment_accounts (id, name, active, created_at)
+				VALUES (${crypto.randomUUID()}, ${name}, 1, ${now})
+			`;
+		}
+		const categories = [
+			'Meals & Entertainment',
+			'Office Supplies',
+			'Software & Subscriptions',
+			'Travel',
+			'Professional Services',
+			'Hardware & Equipment',
+			'Other'
+		];
+		for (const name of categories) {
+			yield* sql`
+				INSERT INTO expense_categories (id, name, active, created_at)
+				VALUES (${crypto.randomUUID()}, ${name}, 1, ${now})
+			`;
+		}
 	})
 });
 

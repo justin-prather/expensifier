@@ -1,6 +1,7 @@
 import { auth, hasUsers } from '$lib/server/auth';
 import { requirePermission } from '$lib/server/authorization';
 import { DocumentRepository, QueueItem } from '$lib/server/documents';
+import { ExpenseRepository } from '$lib/server/expenses';
 import { IntakeService } from '$lib/server/intake';
 import { JobService } from '$lib/server/jobs';
 import { appRuntime } from '$lib/server/runtime';
@@ -18,10 +19,14 @@ export const load: PageServerLoad = async ({ locals }) => {
 	const queue = await appRuntime.runPromise(
 		DocumentRepository.use((repository) => repository.queue)
 	);
+	const review = await appRuntime.runPromise(
+		ExpenseRepository.use((repository) => repository.reviewQueue)
+	);
 	const encodeQueueItem = Schema.encodeSync(QueueItem);
 
 	return {
 		queue: queue.map((item) => encodeQueueItem(item)),
+		review,
 		user: locals.user
 	};
 };

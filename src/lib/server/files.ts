@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { lstat, open, readdir, rename, stat } from 'node:fs/promises';
+import { lstat, mkdir, open, readdir, rename, stat } from 'node:fs/promises';
 import { basename, extname, isAbsolute, join, relative, resolve } from 'node:path';
 
 import { Context, Effect, Layer, Schema } from 'effect';
@@ -63,19 +63,21 @@ async function matchesSignature(path: string, mimeType: string): Promise<boolean
 	}
 }
 
+async function hashPath(path: string): Promise<string> {
+	const metadata = await lstat(path);
+	if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error('invalid_source');
+	return new Promise<string>((resolveHash, reject) => {
+		const hash = createHash('sha256');
+		const stream = createReadStream(path);
+		stream.on('error', reject);
+		stream.on('data', (chunk) => hash.update(chunk));
+		stream.on('end', () => resolveHash(hash.digest('hex')));
+	});
+}
+
 export function hashFile(path: string): Effect.Effect<string, FileLifecycleError> {
 	return Effect.tryPromise({
-		try: async () => {
-			const metadata = await lstat(path);
-			if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error('invalid_source');
-			return new Promise<string>((resolveHash, reject) => {
-				const hash = createHash('sha256');
-				const stream = createReadStream(path);
-				stream.on('error', reject);
-				stream.on('data', (chunk) => hash.update(chunk));
-				stream.on('end', () => resolveHash(hash.digest('hex')));
-			});
-		},
+		try: () => hashPath(path),
 		catch: (cause) =>
 			cause instanceof Error && cause.message === 'invalid_source'
 				? new FileLifecycleError({ code: 'invalid_source', retryable: false })
@@ -89,7 +91,15 @@ export class FileLifecycleService extends Context.Service<
 		readonly discover: Effect.Effect<ReadonlyArray<FileCandidate>, FileLifecycleError>;
 		readonly hash: (path: string) => Effect.Effect<string, FileLifecycleError>;
 		readonly moveToProcessing: (document: Document) => Effect.Effect<string, FileLifecycleError>;
+		readonly moveToManagedDestination: (
+			currentRelativePath: string,
+			targetRelativePath: string,
+			expectedContentHash: string
+		) => Effect.Effect<string, FileLifecycleError>;
 		readonly absolutePath: (document: Document) => string;
+		readonly managedFileExists: (
+			relativePath: string
+		) => Effect.Effect<boolean, FileLifecycleError>;
 	}
 >()('expensifier/FileLifecycleService') {
 	static layerFor(config: RuntimeConfig) {
@@ -97,6 +107,15 @@ export class FileLifecycleService extends Context.Service<
 			FileLifecycleService,
 			FileLifecycleService.of({
 				absolutePath: (document) => resolveWithin(config.dataRoot, document.currentRelativePath),
+				managedFileExists: (relativePath) =>
+					Effect.tryPromise({
+						try: async () => {
+							const path = resolveWithin(config.dataRoot, relativePath);
+							const metadata = await lstat(path).catch(() => null);
+							return metadata?.isFile() ?? false;
+						},
+						catch: () => new FileLifecycleError({ code: 'invalid_source', retryable: false })
+					}),
 				discover: Effect.tryPromise({
 					try: async () => {
 						const walk = async (directory: string): Promise<ReadonlyArray<FileCandidate>> => {
@@ -132,6 +151,51 @@ export class FileLifecycleService extends Context.Service<
 					catch: () => new FileLifecycleError({ code: 'invalid_source', retryable: true })
 				}),
 				hash: hashFile,
+				moveToManagedDestination: (currentRelativePath, targetRelativePath, expectedContentHash) =>
+					Effect.tryPromise({
+						try: async () => {
+							const source = resolveWithin(config.dataRoot, currentRelativePath);
+							const target = resolveWithin(config.dataRoot, targetRelativePath);
+							const targetBeneathLifecycle = [
+								config.directories.processed,
+								config.directories.rejected
+							].some((root) => containedPath(root, target) && relative(root, target) !== '');
+							if (!targetBeneathLifecycle) throw new Error('invalid_source');
+
+							const [sourceMetadata, targetMetadata] = await Promise.all([
+								lstat(source).catch(() => null),
+								lstat(target).catch(() => null)
+							]);
+
+							if (targetMetadata?.isFile()) {
+								if (!sourceMetadata && (await hashPath(target)) === expectedContentHash) {
+									return relative(config.dataRoot, target);
+								}
+								throw new Error('collision');
+							}
+							if (!sourceMetadata) throw new Error('missing_source');
+							if (!sourceMetadata.isFile() || sourceMetadata.isSymbolicLink()) {
+								throw new Error('invalid_source');
+							}
+
+							await mkdir(resolve(target, '..'), { recursive: true });
+							await rename(source, target);
+							return relative(config.dataRoot, target);
+						},
+						catch: (cause) => {
+							const message = cause instanceof Error ? cause.message : '';
+							if (message === 'missing_source') {
+								return new FileLifecycleError({ code: 'missing_source', retryable: true });
+							}
+							if (message === 'invalid_source') {
+								return new FileLifecycleError({ code: 'invalid_source', retryable: false });
+							}
+							if (message === 'collision') {
+								return new FileLifecycleError({ code: 'collision', retryable: false });
+							}
+							return new FileLifecycleError({ code: 'move_failed', retryable: true });
+						}
+					}),
 				moveToProcessing: (document) =>
 					Effect.tryPromise({
 						try: async () => {

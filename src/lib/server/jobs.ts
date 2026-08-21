@@ -4,6 +4,7 @@ import { SqlClient } from 'effect/unstable/sql';
 import { runtimeConfig } from './config';
 import { DatabaseLive } from './database';
 import { DocumentRepository } from './documents';
+import { ExpenseRepository } from './expenses';
 import { FileLifecycleService } from './files';
 import { logOperationalEvent } from './logger';
 import { OcrService } from './ocr';
@@ -223,6 +224,7 @@ export class JobService extends Context.Service<
 			const files = yield* FileLifecycleService;
 			const ocr = yield* OcrService;
 			const ocrRuns = yield* OcrRunRepository;
+			const expenses = yield* ExpenseRepository;
 			let timer: ReturnType<typeof setInterval> | undefined;
 			let processing = false;
 
@@ -277,6 +279,7 @@ export class JobService extends Context.Service<
 						return;
 					}
 					yield* documents.markManaged(document.id, moved.success);
+					yield* expenses.ensureForDocument(document.id);
 					yield* jobs.complete(job.id);
 				} else if (job.type === 'ocr_document') {
 					const document = job.relatedEntityId
@@ -306,6 +309,7 @@ export class JobService extends Context.Service<
 							outcome.failure.rawResponseJson,
 							outcome.failure.retryable
 						);
+						yield* expenses.reconcileSettled;
 						logOperationalEvent('warn', 'job_failed', {
 							component: 'jobs',
 							recordId: job.id,
@@ -318,6 +322,7 @@ export class JobService extends Context.Service<
 					}
 					const normalizedJson = JSON.stringify(outcome.success.normalized);
 					yield* ocrRuns.succeed(run.id, job.id, outcome.success.rawResponseJson, normalizedJson);
+					yield* expenses.reconcileSettled;
 				} else {
 					yield* jobs.complete(job.id);
 				}

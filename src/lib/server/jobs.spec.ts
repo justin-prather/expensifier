@@ -9,6 +9,7 @@ import { afterEach } from 'vitest';
 import { ensureManagedDirectories, loadRuntimeConfig } from './config';
 import { makeDatabaseLayer } from './database';
 import { DocumentRepository } from './documents';
+import { ExpenseRepository } from './expenses';
 import { FileLifecycleService } from './files';
 import { IntakeService } from './intake';
 import { JobRepository, JobService } from './jobs';
@@ -34,7 +35,8 @@ function makeWorkflowLayer(ocrLayer = OcrService.fakeLayer) {
 	const persistence = Layer.mergeAll(
 		JobRepository.layerWithoutDependencies,
 		DocumentRepository.layerWithoutDependencies,
-		OcrRunRepository.layerWithoutDependencies
+		OcrRunRepository.layerWithoutDependencies,
+		ExpenseRepository.layerWithoutDependencies
 	).pipe(Layer.provide(makeDatabaseLayer(':memory:')));
 	const dependencies = Layer.mergeAll(persistence, FileLifecycleService.layerFor(config), ocrLayer);
 	const services = Layer.merge(

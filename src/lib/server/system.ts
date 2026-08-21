@@ -1,8 +1,11 @@
 import { Context, Effect, Layer, Ref } from 'effect';
 
+import { ApprovalIntegrationService } from './approval-integration';
+import { AuditRepository } from './audit';
 import { ensureManagedDirectories, managedDirectoriesAreWritable } from './config';
 import { DatabaseLive } from './database';
 import { DocumentRepository } from './documents';
+import { ExpenseRepository } from './expenses';
 import { FileLifecycleService } from './files';
 import { IntakeService } from './intake';
 import { InvitationService } from './invitations';
@@ -10,22 +13,27 @@ import { JobRepository, JobService } from './jobs';
 import { logOperationalEvent } from './logger';
 import { OcrService } from './ocr';
 import { OcrRunRepository } from './ocr-runs';
+import { ReviewService } from './review';
+import { TemplateService } from './templates';
 
 const PersistenceLive = Layer.mergeAll(
 	JobRepository.layerWithoutDependencies,
 	InvitationService.layerWithoutDependencies,
 	DocumentRepository.layerWithoutDependencies,
-	OcrRunRepository.layerWithoutDependencies
+	OcrRunRepository.layerWithoutDependencies,
+	ExpenseRepository.layerWithoutDependencies,
+	AuditRepository.layerWithoutDependencies,
+	TemplateService.layerWithoutDependencies
 ).pipe(Layer.provide(DatabaseLive));
 
 const ServiceDependenciesLive = Layer.merge(
-	Layer.merge(PersistenceLive, OcrService.taggunLayer),
-	FileLifecycleService.layer
+	Layer.merge(Layer.merge(PersistenceLive, OcrService.taggunLayer), FileLifecycleService.layer),
+	ApprovalIntegrationService.layer
 );
 
 const ApplicationServicesLive = Layer.merge(
-	JobService.layerWithoutDependencies,
-	IntakeService.layerWithoutDependencies
+	Layer.merge(JobService.layerWithoutDependencies, IntakeService.layerWithoutDependencies),
+	ReviewService.layerWithoutDependencies
 ).pipe(Layer.provideMerge(ServiceDependenciesLive));
 
 export interface ReadinessReport {
@@ -51,12 +59,16 @@ export class SystemService extends Context.Service<
 		Effect.gen(function* () {
 			const jobs = yield* JobService;
 			const intake = yield* IntakeService;
+			const expenses = yield* ExpenseRepository;
+			const review = yield* ReviewService;
 			const started = yield* Ref.make(false);
 
 			const initialize = Effect.gen(function* () {
 				yield* Effect.sync(ensureManagedDirectories);
 				yield* intake.start;
 				yield* jobs.recoverAndProcess;
+				yield* review.recoverInterrupted;
+				yield* expenses.reconcileSettled;
 				yield* jobs.start;
 				yield* Ref.set(started, true);
 				logOperationalEvent('info', 'application_started', {

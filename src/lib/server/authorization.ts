@@ -41,6 +41,7 @@ export function hasPermission(role: unknown, permission: Permission): boolean {
 
 interface AuthenticatedUser {
 	readonly id: string;
+	readonly email?: string | null;
 	readonly role?: string | null;
 }
 

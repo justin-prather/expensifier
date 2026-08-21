@@ -9,6 +9,7 @@ import { afterEach } from 'vitest';
 import { ensureManagedDirectories, loadRuntimeConfig, type RuntimeConfig } from './config';
 import { makeDatabaseLayer } from './database';
 import { DocumentRepository } from './documents';
+import { ExpenseRepository } from './expenses';
 import { FileLifecycleService } from './files';
 import { IntakeService } from './intake';
 import { JobRepository, JobService } from './jobs';
@@ -54,7 +55,8 @@ function makeTestLayer(config: RuntimeConfig) {
 	const persistence = Layer.mergeAll(
 		JobRepository.layerWithoutDependencies,
 		DocumentRepository.layerWithoutDependencies,
-		OcrRunRepository.layerWithoutDependencies
+		OcrRunRepository.layerWithoutDependencies,
+		ExpenseRepository.layerWithoutDependencies
 	).pipe(Layer.provide(makeDatabaseLayer(':memory:')));
 	const dependencies = Layer.merge(
 		Layer.merge(persistence, FileLifecycleService.layerFor(config)),
