@@ -101,6 +101,7 @@ export function validateDraft(
 			taxMinor: number | null;
 			grossMinor: number | null;
 			categoryId: string;
+			provenance: 'ocr' | 'manual';
 		}[] = [];
 		const activeLineItems = input.lineItems.filter(
 			(item) =>
@@ -162,7 +163,8 @@ export function validateDraft(
 				netMinor,
 				taxMinor,
 				grossMinor: effectiveGross,
-				categoryId: item.categoryId
+				categoryId: item.categoryId,
+				provenance: item.provenance === 'ocr' ? 'ocr' : 'manual'
 			});
 		}
 
@@ -292,13 +294,17 @@ export class ReviewService extends Context.Service<
 				const detail = yield* expenses.detailFor(expenseId);
 				if (!detail || detail.expense.status !== 'needs_review') {
 					return yield* Effect.fail(
-						new ReviewStateError({ message: 'Expense is not available for review' })
+						new ReviewStateError({
+							message: 'Expense is not available for review'
+						})
 					);
 				}
 				const document = yield* documents.findById(detail.expense.documentId);
 				if (!document || document.status !== 'processing') {
 					return yield* Effect.fail(
-						new ReviewStateError({ message: 'Managed document is unavailable' })
+						new ReviewStateError({
+							message: 'Managed document is unavailable'
+						})
 					);
 				}
 				return { ...detail, document };
@@ -354,7 +360,11 @@ export class ReviewService extends Context.Service<
 					action: 'reviewer_edited',
 					entityType: 'expense',
 					entityId: expenseId,
-					data: { vendor: draft.vendor, totalMinor: draft.totalMinor, currency: draft.currency }
+					data: {
+						vendor: draft.vendor,
+						totalMinor: draft.totalMinor,
+						currency: draft.currency
+					}
 				});
 			});
 
@@ -385,7 +395,9 @@ export class ReviewService extends Context.Service<
 					(yield* files.managedFileExists(targetRelativePath))
 				) {
 					return yield* Effect.fail(
-						new ReviewStateError({ message: `Destination already exists: ${targetRelativePath}` })
+						new ReviewStateError({
+							message: `Destination already exists: ${targetRelativePath}`
+						})
 					);
 				}
 
@@ -415,7 +427,11 @@ export class ReviewService extends Context.Service<
 							action: 'approved',
 							entityType: 'expense',
 							entityId: expenseId,
-							data: { targetRelativePath, totalMinor: draft.totalMinor, currency: draft.currency }
+							data: {
+								targetRelativePath,
+								totalMinor: draft.totalMinor,
+								currency: draft.currency
+							}
 						});
 						yield* integration.notifyApproved({
 							expenseId,
@@ -444,7 +460,9 @@ export class ReviewService extends Context.Service<
 				}
 				if (trimmedReason.length > 500) {
 					return yield* Effect.fail(
-						new ReviewStateError({ message: 'Rejection reason must be at most 500 characters' })
+						new ReviewStateError({
+							message: 'Rejection reason must be at most 500 characters'
+						})
 					);
 				}
 				const context = yield* requireReviewable(expenseId);
@@ -456,7 +474,9 @@ export class ReviewService extends Context.Service<
 					(yield* files.managedFileExists(targetRelativePath))
 				) {
 					return yield* Effect.fail(
-						new ReviewStateError({ message: `Destination already exists: ${targetRelativePath}` })
+						new ReviewStateError({
+							message: `Destination already exists: ${targetRelativePath}`
+						})
 					);
 				}
 
@@ -542,7 +562,10 @@ export class ReviewService extends Context.Service<
 							action: intent.kind === 'approve' ? 'approved' : 'rejected',
 							entityType: 'expense',
 							entityId: expense.id,
-							data: { recovered: true, targetRelativePath: intent.targetRelativePath }
+							data: {
+								recovered: true,
+								targetRelativePath: intent.targetRelativePath
+							}
 						});
 					} else {
 						yield* expenses.clearMoveIntent(expense.id);
@@ -558,7 +581,13 @@ export class ReviewService extends Context.Service<
 				}
 			}).pipe(Effect.withSpan('ReviewService.recoverInterrupted'), Effect.orDie);
 
-			return ReviewService.of({ saveDraft, approve, reject, reopen, recoverInterrupted });
+			return ReviewService.of({
+				saveDraft,
+				approve,
+				reject,
+				reopen,
+				recoverInterrupted
+			});
 		})
 	);
 }

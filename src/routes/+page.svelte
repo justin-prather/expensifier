@@ -151,9 +151,9 @@
 			</div>
 			{#if data.user.role === 'admin'}
 				<a
-					href="/settings/users"
+					href="/settings"
 					class="border border-ink/30 px-3 py-1.5 text-xs font-bold tracking-wide uppercase hover:bg-forest hover:text-paper"
-					>Users</a
+					>Settings</a
 				>
 			{/if}
 			<form method="POST" action="?/sign-out">

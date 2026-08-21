@@ -41,7 +41,11 @@ export const actions: Actions = {
 		const role = form.get('role');
 
 		if (!emailPattern.test(email) || !isRole(role)) {
-			return fail(400, { action: 'invite', message: 'Enter a valid email and role.', email });
+			return fail(400, {
+				action: 'invite',
+				message: 'Enter a valid email and role.',
+				email
+			});
 		}
 
 		try {
@@ -83,14 +87,23 @@ export const actions: Actions = {
 		const target = users.users.find((user) => user.id === userId);
 		const adminCount = users.users.filter((user) => user.role === 'admin').length;
 		if (target?.role === 'admin' && role !== 'admin' && adminCount <= 1) {
-			return fail(400, { action: 'set-role', message: 'At least one admin is required.' });
+			return fail(400, {
+				action: 'set-role',
+				message: 'At least one admin is required.'
+			});
 		}
 
 		try {
-			await auth.api.setRole({ body: { userId, role }, headers: request.headers });
+			await auth.api.setRole({
+				body: { userId, role },
+				headers: request.headers
+			});
 			return { action: 'set-role', message: 'User role updated.' };
 		} catch {
-			return fail(400, { action: 'set-role', message: 'The user role could not be updated.' });
+			return fail(400, {
+				action: 'set-role',
+				message: 'The user role could not be updated.'
+			});
 		}
 	},
 	revoke: async ({ locals, request }) => {
@@ -105,7 +118,10 @@ export const actions: Actions = {
 			await appRuntime.runPromise(InvitationService.use((service) => service.revoke(invitationId)));
 			return { action: 'revoke', message: 'Invitation revoked.' };
 		} catch {
-			return fail(400, { action: 'revoke', message: 'Invitation is no longer active.' });
+			return fail(400, {
+				action: 'revoke',
+				message: 'Invitation is no longer active.'
+			});
 		}
 	}
 };

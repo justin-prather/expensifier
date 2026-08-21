@@ -13,7 +13,9 @@ import { JobRepository, JobService } from './jobs';
 import { logOperationalEvent } from './logger';
 import { OcrService } from './ocr';
 import { OcrRunRepository } from './ocr-runs';
+import { ReferenceService } from './reference';
 import { ReviewService } from './review';
+import { VendorRuleService } from './rules';
 import { TemplateService } from './templates';
 
 const PersistenceLive = Layer.mergeAll(
@@ -24,11 +26,16 @@ const PersistenceLive = Layer.mergeAll(
 	ExpenseRepository.layerWithoutDependencies,
 	AuditRepository.layerWithoutDependencies,
 	TemplateService.layerWithoutDependencies
-).pipe(Layer.provide(DatabaseLive));
+).pipe(Layer.provideMerge(DatabaseLive));
+
+const AdminServicesLive = Layer.merge(
+	ReferenceService.layerWithoutDependencies,
+	VendorRuleService.layerWithoutDependencies
+).pipe(Layer.provideMerge(PersistenceLive));
 
 const ServiceDependenciesLive = Layer.merge(
 	Layer.merge(Layer.merge(PersistenceLive, OcrService.taggunLayer), FileLifecycleService.layer),
-	ApprovalIntegrationService.layer
+	Layer.merge(ApprovalIntegrationService.layer, AdminServicesLive)
 );
 
 const ApplicationServicesLive = Layer.merge(

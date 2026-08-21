@@ -6,6 +6,7 @@ import { ExpenseRepository, type ExpenseDraftInput } from '$lib/server/expenses'
 import { JobService } from '$lib/server/jobs';
 import { OcrRunRepository } from '$lib/server/ocr-runs';
 import { ReviewService, validateDraft } from '$lib/server/review';
+import { VendorRuleService } from '$lib/server/rules';
 import { appRuntime } from '$lib/server/runtime';
 import { TemplateService } from '$lib/server/templates';
 import { error, fail, redirect } from '@sveltejs/kit';
@@ -22,7 +23,8 @@ const LineItemPayload = Schema.Struct({
 	netAmount: Schema.String,
 	taxAmount: Schema.String,
 	grossAmount: Schema.String,
-	categoryId: Schema.String
+	categoryId: Schema.String,
+	provenance: Schema.optional(Schema.Literals(['ocr', 'manual']))
 });
 
 const TaxComponentPayload = Schema.Struct({
@@ -147,6 +149,22 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 		})
 	);
 
+	const ocrVendorName =
+		normalizedOcr &&
+		typeof normalizedOcr === 'object' &&
+		'merchantName' in normalizedOcr &&
+		normalizedOcr.merchantName &&
+		typeof normalizedOcr.merchantName === 'object' &&
+		'value' in normalizedOcr.merchantName &&
+		typeof normalizedOcr.merchantName.value === 'string'
+			? normalizedOcr.merchantName.value
+			: null;
+	const suggestion = await appRuntime.runPromise(
+		VendorRuleService.use((service) =>
+			service.suggestForVendor(detail.expense.vendor ?? ocrVendorName)
+		)
+	);
+
 	return {
 		user: locals.user,
 		document: {
@@ -179,7 +197,8 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 			netAmount: item.netMinor !== null ? (item.netMinor / 100).toFixed(2) : '',
 			taxAmount: item.taxMinor !== null ? (item.taxMinor / 100).toFixed(2) : '',
 			grossAmount: item.grossMinor !== null ? (item.grossMinor / 100).toFixed(2) : '',
-			categoryId: item.categoryId ?? ''
+			categoryId: item.categoryId ?? '',
+			provenance: item.provenance
 		})),
 		taxComponents: detail.taxComponents.map((component) => ({
 			label: component.label,
@@ -206,6 +225,7 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 		normalizedOcr,
 		rawOcrJson: rawOcrJson ? rawOcrJson.slice(0, 40_000) : null,
 		ocrRunCount: runs.length,
+		suggestion,
 		preview,
 		previousId,
 		nextId,
@@ -246,7 +266,10 @@ export const actions: Actions = {
 			);
 			return { message: 'Draft saved' };
 		} catch (cause) {
-			const failure = cause as { fieldErrors?: Record<string, string>; message?: string };
+			const failure = cause as {
+				fieldErrors?: Record<string, string>;
+				message?: string;
+			};
 			if (failure.fieldErrors) return fail(400, { fieldErrors: failure.fieldErrors });
 			return fail(409, { message: failure.message ?? 'Unable to save draft' });
 		}
@@ -275,9 +298,13 @@ export const actions: Actions = {
 			};
 			if (failure.fieldErrors) return fail(400, { fieldErrors: failure.fieldErrors });
 			if (failure.code === 'collision') {
-				return fail(409, { message: 'A file already exists at the destination' });
+				return fail(409, {
+					message: 'A file already exists at the destination'
+				});
 			}
-			return fail(409, { message: failure.message ?? 'Unable to approve expense' });
+			return fail(409, {
+				message: failure.message ?? 'Unable to approve expense'
+			});
 		}
 	},
 
@@ -300,9 +327,13 @@ export const actions: Actions = {
 		} catch (cause) {
 			const failure = cause as { message?: string; code?: string };
 			if (failure.code === 'collision') {
-				return fail(409, { message: 'A file already exists at the destination' });
+				return fail(409, {
+					message: 'A file already exists at the destination'
+				});
 			}
-			return fail(409, { message: failure.message ?? 'Unable to reject expense' });
+			return fail(409, {
+				message: failure.message ?? 'Unable to reject expense'
+			});
 		}
 	},
 
@@ -321,7 +352,9 @@ export const actions: Actions = {
 			return { message: 'Expense reopened for review' };
 		} catch (cause) {
 			const failure = cause as { message?: string };
-			return fail(409, { message: failure.message ?? 'Unable to reopen expense' });
+			return fail(409, {
+				message: failure.message ?? 'Unable to reopen expense'
+			});
 		}
 	},
 

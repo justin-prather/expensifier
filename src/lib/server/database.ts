@@ -253,6 +253,23 @@ const migrations = SqliteMigrator.fromRecord({
 				VALUES (${crypto.randomUUID()}, ${name}, 1, ${now})
 			`;
 		}
+	}),
+	'0006_create_vendor_rules': Effect.gen(function* () {
+		const sql = yield* SqlClient.SqlClient;
+		yield* sql`
+			CREATE TABLE vendor_rules (
+				id TEXT PRIMARY KEY,
+				alias TEXT NOT NULL UNIQUE,
+				vendor_name TEXT NOT NULL,
+				payment_account_id TEXT REFERENCES payment_accounts(id),
+				category_id TEXT REFERENCES expense_categories(id),
+				client_id TEXT REFERENCES clients(id),
+				active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+				created_at TEXT NOT NULL,
+				updated_at TEXT NOT NULL
+			)
+		`;
+		yield* sql`CREATE INDEX vendor_rules_active_alias ON vendor_rules (active, alias)`;
 	})
 });
 

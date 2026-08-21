@@ -16,6 +16,7 @@
 		taxAmount: string;
 		grossAmount: string;
 		categoryId: string;
+		provenance: 'ocr' | 'manual';
 	};
 
 	type TaxRow = { label: string; amount: string; ratePercent: string };
@@ -51,7 +52,8 @@
 			netAmount: '',
 			taxAmount: '',
 			grossAmount: '',
-			categoryId: ''
+			categoryId: '',
+			provenance: 'manual'
 		};
 	}
 
@@ -137,10 +139,37 @@
 				netAmount: item.netAmount?.value ? Number(item.netAmount.value).toFixed(2) : '',
 				taxAmount: item.taxAmount?.value ? Number(item.taxAmount.value).toFixed(2) : '',
 				grossAmount: item.grossAmount?.value ? Number(item.grossAmount.value).toFixed(2) : '',
-				categoryId: ''
+				categoryId: '',
+				provenance: 'ocr' as const
 			}));
 		}
 		notice = 'OCR values applied. Review every field before approving.';
+	}
+
+	let dismissedSuggestionId = $state<string | null>(null);
+	const suggestion = $derived(
+		data.suggestion && data.suggestion.ruleId !== dismissedSuggestionId ? data.suggestion : null
+	);
+
+	function applyRuleSuggestion() {
+		if (!suggestion) return;
+		vendor = suggestion.vendorName;
+		if (suggestion.paymentAccountId) paymentAccountId = suggestion.paymentAccountId;
+		if (suggestion.clientId) clientId = suggestion.clientId;
+		if (suggestion.categoryId) {
+			lineItems = lineItems.map((row) =>
+				row.categoryId === '' ? { ...row, categoryId: suggestion.categoryId! } : row
+			);
+		}
+		dismissedSuggestionId = suggestion.ruleId;
+		notice = `Rule suggestion applied from alias "${suggestion.alias}". Review every field before approving.`;
+	}
+
+	function markLineItemManual(index: number) {
+		const row = lineItems[index];
+		if (row && row.provenance !== 'manual') {
+			lineItems[index] = { ...row, provenance: 'manual' };
+		}
 	}
 
 	async function refreshPreview() {
@@ -300,6 +329,39 @@
 		</div>
 
 		<div class="flex flex-col gap-6">
+			{#if suggestion}
+				<div class="border-2 border-dashed border-ink bg-sand/60 p-4">
+					<div class="flex flex-wrap items-start justify-between gap-3">
+						<div>
+							<p class="font-mono text-[11px] font-bold text-ink/70 uppercase">
+								Rule suggestion · matched alias “{suggestion.alias}”
+							</p>
+							<p class="mt-1 text-sm font-semibold">{suggestion.vendorName}</p>
+							<p class="mt-1 text-xs text-ink/70">
+								{suggestion.paymentAccountName ?? 'No payment account'}
+								{#if suggestion.categoryName}
+									· {suggestion.categoryName}
+								{/if}
+								{#if suggestion.clientName}
+									· {suggestion.clientName}
+								{/if}
+							</p>
+						</div>
+						<div class="flex gap-2">
+							<button
+								type="button"
+								class="border border-ink bg-ink px-3 py-1.5 font-mono text-xs font-bold text-paper uppercase hover:opacity-80"
+								onclick={applyRuleSuggestion}>Apply suggestion</button
+							>
+							<button
+								type="button"
+								class="border border-ink px-3 py-1.5 font-mono text-xs font-bold uppercase hover:bg-ink hover:text-paper"
+								onclick={() => (dismissedSuggestionId = suggestion.ruleId)}>Dismiss</button
+							>
+						</div>
+					</div>
+				</div>
+			{/if}
 			<div class="border-2 border-ink bg-white/40 p-5">
 				<div class="flex items-center justify-between">
 					<h2 class="text-lg font-semibold">Expense details</h2>
@@ -432,10 +494,21 @@
 						<div class="border border-ink/30 bg-paper p-3">
 							<div class="grid gap-2 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_auto]">
 								<label class="text-xs font-bold uppercase">
-									Description
+									<span class="flex items-center gap-2">
+										Description
+										<span
+											class={`px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase ${row.provenance === 'ocr' ? 'bg-sand text-ink' : 'border border-ink/25 text-ink/45'}`}
+											title={row.provenance === 'ocr'
+												? 'Suggested by OCR; editing marks it manual'
+												: 'Entered manually'}
+										>
+											{row.provenance}
+										</span>
+									</span>
 									<input
 										class="mt-1 w-full border border-ink bg-white px-2 py-1.5 text-sm font-normal"
 										bind:value={row.description}
+										oninput={() => markLineItemManual(index)}
 									/>
 									{#if errorText(`lineItems.${index}.description`)}<span
 											class="block font-mono text-[11px] text-rose-700"
@@ -447,6 +520,7 @@
 									<select
 										class="mt-1 w-full border border-ink bg-white px-2 py-1.5 text-sm font-normal"
 										bind:value={row.categoryId}
+										onchange={() => markLineItemManual(index)}
 									>
 										<option value="">Select…</option>
 										{#each data.referenceData.categories as category (category.id)}
@@ -471,6 +545,7 @@
 										class="mt-1 w-full border border-ink bg-white px-2 py-1.5 text-sm font-normal"
 										bind:value={row.quantity}
 										inputmode="decimal"
+										oninput={() => markLineItemManual(index)}
 									/>
 								</label>
 								<label class="text-xs font-bold uppercase"
@@ -479,6 +554,7 @@
 										class="mt-1 w-full border border-ink bg-white px-2 py-1.5 text-sm font-normal"
 										bind:value={row.unitPrice}
 										inputmode="decimal"
+										oninput={() => markLineItemManual(index)}
 									/>
 									{#if errorText(`lineItems.${index}.unitPrice`)}<span
 											class="block font-mono text-[11px] text-rose-700"
@@ -491,6 +567,7 @@
 										class="mt-1 w-full border border-ink bg-white px-2 py-1.5 text-sm font-normal"
 										bind:value={row.netAmount}
 										inputmode="decimal"
+										oninput={() => markLineItemManual(index)}
 									/>
 									{#if errorText(`lineItems.${index}.netAmount`)}<span
 											class="block font-mono text-[11px] text-rose-700"
@@ -503,6 +580,7 @@
 										class="mt-1 w-full border border-ink bg-white px-2 py-1.5 text-sm font-normal"
 										bind:value={row.taxAmount}
 										inputmode="decimal"
+										oninput={() => markLineItemManual(index)}
 									/>
 									{#if errorText(`lineItems.${index}.taxAmount`)}<span
 											class="block font-mono text-[11px] text-rose-700"
@@ -515,6 +593,7 @@
 										class="mt-1 w-full border border-ink bg-white px-2 py-1.5 text-sm font-normal"
 										bind:value={row.grossAmount}
 										inputmode="decimal"
+										oninput={() => markLineItemManual(index)}
 										placeholder={rowEffectiveGross(row) !== null
 											? (rowEffectiveGross(row)! / 100).toFixed(2)
 											: ''}

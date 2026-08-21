@@ -73,6 +73,7 @@ export interface LineItemInput {
 	readonly taxAmount: string;
 	readonly grossAmount: string;
 	readonly categoryId: string;
+	readonly provenance?: 'ocr' | 'manual';
 }
 
 export interface TaxComponentInput {
@@ -111,6 +112,7 @@ export interface NormalizedDraft {
 		readonly taxMinor: number | null;
 		readonly grossMinor: number | null;
 		readonly categoryId: string;
+		readonly provenance: 'ocr' | 'manual';
 	}>;
 	readonly taxComponents: ReadonlyArray<{
 		readonly label: 'GST' | 'HST' | 'PST' | 'QST' | 'OTHER';
@@ -153,7 +155,10 @@ function parseMoveIntent(json: string): MoveIntent | null {
 			typeof parsed.targetRelativePath === 'string' &&
 			(parsed.kind === 'approve' || parsed.kind === 'reject')
 		) {
-			return { kind: parsed.kind, targetRelativePath: parsed.targetRelativePath };
+			return {
+				kind: parsed.kind,
+				targetRelativePath: parsed.targetRelativePath
+			};
 		}
 		return null;
 	} catch {
@@ -274,13 +279,25 @@ export class ExpenseRepository extends Context.Service<
 			const referenceData = Effect.gen(function* () {
 				const mapReference = (rows: ReadonlyArray<{ id: string; name: string; active: number }>) =>
 					rows.map((row) => new ReferenceRecord({ ...row, active: !!row.active }));
-				const accounts = yield* sql<{ id: string; name: string; active: number }>`
+				const accounts = yield* sql<{
+					id: string;
+					name: string;
+					active: number;
+				}>`
 					SELECT id, name, active FROM payment_accounts WHERE active = 1 ORDER BY name
 				`;
-				const categories = yield* sql<{ id: string; name: string; active: number }>`
+				const categories = yield* sql<{
+					id: string;
+					name: string;
+					active: number;
+				}>`
 					SELECT id, name, active FROM expense_categories WHERE active = 1 ORDER BY name
 				`;
-				const clients = yield* sql<{ id: string; name: string; active: number }>`
+				const clients = yield* sql<{
+					id: string;
+					name: string;
+					active: number;
+				}>`
 					SELECT id, name, active FROM clients WHERE active = 1 ORDER BY name
 				`;
 				return {
@@ -315,7 +332,8 @@ export class ExpenseRepository extends Context.Service<
 								) VALUES (
 									${crypto.randomUUID()}, ${expenseId}, ${index}, ${item.description},
 									${item.quantity}, ${item.unitPriceMinor}, ${item.netMinor}, ${item.taxMinor},
-									${item.grossMinor}, ${item.categoryId}, 'manual', ${now}, ${now}
+									${item.grossMinor}, ${item.categoryId},
+									${item.provenance === 'ocr' ? 'ocr' : 'manual'}, ${now}, ${now}
 								)
 							`;
 						}
