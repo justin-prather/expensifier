@@ -19,6 +19,7 @@ import { IntakeService } from './intake';
 import { JobRepository, JobService } from './jobs';
 import { OcrService } from './ocr';
 import { OcrRunRepository } from './ocr-runs';
+import { ReferenceService } from './reference';
 import { ReviewService, validateDraft } from './review';
 import { VendorRuleService } from './rules';
 import { TemplateService } from './templates';
@@ -51,9 +52,13 @@ function makeReviewLayer() {
 		ClassificationRepository.layerWithoutDependencies,
 		VendorRuleService.layerWithoutDependencies
 	).pipe(Layer.provideMerge(persistence));
+	const referencePersistence = ReferenceService.layerWithoutDependencies.pipe(
+		Layer.provideMerge(persistence)
+	);
 	const dependencies = Layer.mergeAll(
 		persistence,
 		classificationPersistence,
+		referencePersistence,
 		FileLifecycleService.layerFor(config),
 		ApprovalIntegrationService.layer,
 		OcrService.fakeLayer,
@@ -79,8 +84,11 @@ function draftInput(overrides: Partial<ExpenseDraftInput> = {}): ExpenseDraftInp
 		currency: 'CAD',
 		notes: 'team lunch',
 		billable: false,
-		clientId: null,
+		clientAssignmentMode: 'expense',
+		clientIds: [],
 		paymentAccountId: null,
+		lineItemsIncludeTax: true,
+		approveWithoutLineItems: false,
 		lineItems: [],
 		taxComponents: [],
 		...overrides
@@ -235,6 +243,7 @@ describe('review flows', () => {
 					draftInput({
 						paymentAccountId: refs.paymentAccounts[0]!.id,
 						total: '20.00',
+						approveWithoutLineItems: true,
 						lineItems: [
 							{
 								description: 'Mismatched',
@@ -260,7 +269,7 @@ describe('review flows', () => {
 		}).pipe(Effect.provide(layer));
 	});
 
-	it.live('balances net line items with separately itemized tax', () => {
+	it.live('allows approval validation without line items only when explicitly overridden', () => {
 		const { config, layer } = makeReviewLayer();
 		return Effect.gen(function* () {
 			const expenses = yield* ExpenseRepository;
@@ -270,19 +279,205 @@ describe('review flows', () => {
 				validateDraft(
 					draftInput({
 						paymentAccountId: refs.paymentAccounts[0]!.id,
-						total: '11.30',
+						approveWithoutLineItems: true
+					}),
+					refs,
+					true
+				)
+			);
+
+			expect(Result.isSuccess(outcome)).toBe(true);
+			if (Result.isSuccess(outcome)) expect(outcome.success.lineItems).toEqual([]);
+		}).pipe(Effect.provide(layer));
+	});
+
+	it.live('persists multiple expense-level clients in selection order', () => {
+		const { config, layer } = makeReviewLayer();
+		return Effect.gen(function* () {
+			const expenses = yield* ExpenseRepository;
+			const references = yield* ReferenceService;
+			const intake = yield* intakeOneReceipt(config.directories.inbox);
+			const firstClient = yield* references.create('client', 'Alpha Client', actor);
+			const secondClient = yield* references.create('client', 'Beta Client', actor);
+			const refs = yield* expenses.referenceData;
+			const draft = yield* validateDraft(
+				draftInput({
+					paymentAccountId: refs.paymentAccounts[0]!.id,
+					billable: true,
+					clientAssignmentMode: 'expense',
+					clientIds: [secondClient.id, firstClient.id],
+					lineItems: [
+						{
+							description: 'Consulting expense',
+							quantity: '1',
+							unitPrice: '23.45',
+							netAmount: '23.45',
+							taxAmount: '',
+							grossAmount: '23.45',
+							categoryId: refs.categories[0]!.id,
+							clientId: null
+						}
+					]
+				}),
+				refs,
+				true
+			);
+			yield* expenses.saveDraft(intake.expenseId, draft);
+
+			const detail = yield* expenses.detailFor(intake.expenseId);
+			expect(detail?.expense.clientAssignmentMode).toBe('expense');
+			expect(detail?.expense.clientId).toBeNull();
+			expect(detail?.clientIds).toEqual([secondClient.id, firstClient.id]);
+			expect(detail?.lineItems[0]?.clientId).toBeNull();
+		}).pipe(Effect.provide(layer));
+	});
+
+	it.live('allows optional per-line clients but requires at least one assignment', () => {
+		const { config, layer } = makeReviewLayer();
+		return Effect.gen(function* () {
+			const expenses = yield* ExpenseRepository;
+			const references = yield* ReferenceService;
+			const intake = yield* intakeOneReceipt(config.directories.inbox);
+			const client = yield* references.create('client', 'Line Client', actor);
+			const refs = yield* expenses.referenceData;
+			const lineItems = [
+				{
+					description: 'Assigned item',
+					quantity: '1',
+					unitPrice: '10.00',
+					netAmount: '10.00',
+					taxAmount: '',
+					grossAmount: '10.00',
+					categoryId: refs.categories[0]!.id,
+					clientId: client.id
+				},
+				{
+					description: 'Unassigned item',
+					quantity: '1',
+					unitPrice: '13.45',
+					netAmount: '13.45',
+					taxAmount: '',
+					grossAmount: '13.45',
+					categoryId: refs.categories[0]!.id,
+					clientId: null
+				}
+			];
+			const valid = yield* Effect.result(
+				validateDraft(
+					draftInput({
+						paymentAccountId: refs.paymentAccounts[0]!.id,
+						billable: true,
+						clientAssignmentMode: 'line_item',
+						clientIds: [],
+						lineItems
+					}),
+					refs,
+					true
+				)
+			);
+			expect(Result.isSuccess(valid)).toBe(true);
+			if (Result.isSuccess(valid)) yield* expenses.saveDraft(intake.expenseId, valid.success);
+			const detail = yield* expenses.detailFor(intake.expenseId);
+			expect(detail?.expense.clientAssignmentMode).toBe('line_item');
+			expect(detail?.clientIds).toEqual([]);
+			expect(detail?.lineItems.map((item) => item.clientId)).toEqual([client.id, null]);
+
+			const missing = yield* Effect.result(
+				validateDraft(
+					draftInput({
+						paymentAccountId: refs.paymentAccounts[0]!.id,
+						billable: true,
+						clientAssignmentMode: 'line_item',
+						clientIds: [client.id],
+						lineItems: lineItems.map((item) => Object.assign({}, item, { clientId: null }))
+					}),
+					refs,
+					true
+				)
+			);
+			expect(Result.isFailure(missing)).toBe(true);
+			if (Result.isFailure(missing)) {
+				expect(missing.failure.fieldErrors.client).toBe(
+					'Assign at least one line item to a client'
+				);
+			}
+		}).pipe(Effect.provide(layer));
+	});
+
+	it.live('balances net line items with separately itemized tax', () => {
+		const { config, layer } = makeReviewLayer();
+		return Effect.gen(function* () {
+			const expenses = yield* ExpenseRepository;
+			yield* intakeOneReceipt(config.directories.inbox);
+			const refs = yield* expenses.referenceData;
+			const taxExclusiveDraft = draftInput({
+				paymentAccountId: refs.paymentAccounts[0]!.id,
+				total: '11.30',
+				lineItemsIncludeTax: false,
+				lineItems: [
+					{
+						description: 'Taxable item',
+						quantity: '1',
+						unitPrice: '10.00',
+						netAmount: '10.00',
+						taxAmount: '',
+						grossAmount: '',
+						categoryId: refs.categories[0]!.id
+					}
+				],
+				taxComponents: [{ label: 'HST', amount: '1.30', ratePercent: '13' }]
+			});
+			const outcome = yield* Effect.result(validateDraft(taxExclusiveDraft, refs, true));
+
+			expect(Result.isSuccess(outcome)).toBe(true);
+			if (Result.isSuccess(outcome)) {
+				expect(outcome.success.lineItems[0]?.grossMinor).toBe(1000);
+				expect(outcome.success.taxComponents[0]?.amountMinor).toBe(130);
+			}
+
+			const wrongTreatment = yield* Effect.result(
+				validateDraft({ ...taxExclusiveDraft, lineItemsIncludeTax: true }, refs, true)
+			);
+			expect(Result.isFailure(wrongTreatment)).toBe(true);
+			if (Result.isFailure(wrongTreatment)) {
+				expect(wrongTreatment.failure.fieldErrors.lineItems).toContain(
+					'Line items total 10.00 but expense total is 11.30'
+				);
+			}
+		}).pipe(Effect.provide(layer));
+	});
+
+	it.live('balances negative line items as discounts against positive items', () => {
+		const { config, layer } = makeReviewLayer();
+		return Effect.gen(function* () {
+			const expenses = yield* ExpenseRepository;
+			yield* intakeOneReceipt(config.directories.inbox);
+			const refs = yield* expenses.referenceData;
+			const outcome = yield* Effect.result(
+				validateDraft(
+					draftInput({
+						paymentAccountId: refs.paymentAccounts[0]!.id,
+						total: '90.00',
 						lineItems: [
 							{
-								description: 'Taxable item',
+								description: 'Service',
 								quantity: '1',
-								unitPrice: '10.00',
-								netAmount: '10.00',
+								unitPrice: '100.00',
+								netAmount: '100.00',
 								taxAmount: '',
-								grossAmount: '',
+								grossAmount: '100.00',
+								categoryId: refs.categories[0]!.id
+							},
+							{
+								description: 'Discount',
+								quantity: '1',
+								unitPrice: '-10.00',
+								netAmount: '-10.00',
+								taxAmount: '',
+								grossAmount: '-10.00',
 								categoryId: refs.categories[0]!.id
 							}
-						],
-						taxComponents: [{ label: 'HST', amount: '1.30', ratePercent: '13' }]
+						]
 					}),
 					refs,
 					true
@@ -291,8 +486,7 @@ describe('review flows', () => {
 
 			expect(Result.isSuccess(outcome)).toBe(true);
 			if (Result.isSuccess(outcome)) {
-				expect(outcome.success.lineItems[0]?.grossMinor).toBe(1000);
-				expect(outcome.success.taxComponents[0]?.amountMinor).toBe(130);
+				expect(outcome.success.lineItems[1]?.grossMinor).toBe(-1000);
 			}
 		}).pipe(Effect.provide(layer));
 	});

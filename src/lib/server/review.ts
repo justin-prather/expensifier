@@ -1,4 +1,9 @@
-import { formatMinor, parseAmountToMinor, parseOptionalAmountToMinor } from '$lib/money';
+import {
+	formatMinor,
+	parseAmountToMinor,
+	parseOptionalAmountToMinor,
+	parseOptionalSignedAmountToMinor
+} from '$lib/money';
 import { Context, Effect, Layer, Result } from 'effect';
 import { SqlClient } from 'effect/unstable/sql';
 
@@ -84,10 +89,13 @@ export function validateDraft(
 			fieldErrors.paymentAccount = 'Payment account is required';
 		}
 
-		const clientId = input.billable ? input.clientId : null;
-		if (input.billable) {
-			if (!clientId) fieldErrors.client = 'Client is required when billable';
-			else if (!refs.clients.some((client) => client.id === clientId)) {
+		const clientAssignmentMode = input.billable ? input.clientAssignmentMode : 'expense';
+		const clientIds =
+			input.billable && clientAssignmentMode === 'expense' ? [...new Set(input.clientIds)] : [];
+		if (input.billable && clientAssignmentMode === 'expense') {
+			if (strict && clientIds.length === 0) {
+				fieldErrors.client = 'At least one client is required when billable';
+			} else if (clientIds.some((id) => !refs.clients.some((client) => client.id === id))) {
 				fieldErrors.client = 'Unknown client';
 			}
 		}
@@ -103,6 +111,7 @@ export function validateDraft(
 			taxMinor: number | null;
 			grossMinor: number | null;
 			categoryId: string;
+			clientId: string | null;
 			provenance: 'ocr' | 'manual';
 		}[] = [];
 		const activeLineItems = input.lineItems.filter(
@@ -112,10 +121,28 @@ export function validateDraft(
 					item.unitPrice,
 					item.netAmount,
 					item.taxAmount,
-					item.grossAmount
+					item.grossAmount,
+					input.billable && clientAssignmentMode === 'line_item' ? (item.clientId ?? '') : ''
 				])
 		);
-		if (strict && activeLineItems.length === 0) {
+		const hasAnyLineItemInput = input.lineItems.some(
+			(item) =>
+				!isEmptyRow([
+					item.description,
+					item.quantity,
+					item.unitPrice,
+					item.netAmount,
+					item.taxAmount,
+					item.grossAmount,
+					item.categoryId,
+					input.billable && clientAssignmentMode === 'line_item' ? (item.clientId ?? '') : ''
+				])
+		);
+		if (
+			strict &&
+			activeLineItems.length === 0 &&
+			(!input.approveWithoutLineItems || hasAnyLineItemInput)
+		) {
 			fieldErrors.lineItems = 'At least one line item is required';
 		}
 		for (const [index, item] of activeLineItems.entries()) {
@@ -129,24 +156,29 @@ export function validateDraft(
 			else if (!refs.categories.some((category) => category.id === item.categoryId)) {
 				fieldErrors[`${prefix}.categoryId`] = 'Unknown category';
 			}
+			const clientId =
+				input.billable && clientAssignmentMode === 'line_item' ? (item.clientId ?? null) : null;
+			if (clientId && !refs.clients.some((client) => client.id === clientId)) {
+				fieldErrors[`${prefix}.clientId`] = 'Unknown client';
+			}
 
 			const quantity = item.quantity.trim();
 			if (quantity && !/^\d+(?:\.\d{1,3})?$/.test(quantity)) {
 				fieldErrors[`${prefix}.quantity`] = 'Quantity must be a positive number';
 			}
-			const unitPriceMinor = parseOptionalAmountToMinor(item.unitPrice);
+			const unitPriceMinor = parseOptionalSignedAmountToMinor(item.unitPrice);
 			if (unitPriceMinor === null && item.unitPrice.trim() !== '') {
 				fieldErrors[`${prefix}.unitPrice`] = 'Unit price is not a valid amount';
 			}
-			const netMinor = parseOptionalAmountToMinor(item.netAmount);
+			const netMinor = parseOptionalSignedAmountToMinor(item.netAmount);
 			if (netMinor === null && item.netAmount.trim() !== '') {
 				fieldErrors[`${prefix}.netAmount`] = 'Net amount is not a valid amount';
 			}
-			const taxMinor = parseOptionalAmountToMinor(item.taxAmount);
+			const taxMinor = parseOptionalSignedAmountToMinor(item.taxAmount);
 			if (taxMinor === null && item.taxAmount.trim() !== '') {
 				fieldErrors[`${prefix}.taxAmount`] = 'Tax amount is not a valid amount';
 			}
-			const grossMinor = parseOptionalAmountToMinor(item.grossAmount);
+			const grossMinor = parseOptionalSignedAmountToMinor(item.grossAmount);
 			if (grossMinor === null && item.grossAmount.trim() !== '') {
 				fieldErrors[`${prefix}.grossAmount`] = 'Gross amount is not a valid amount';
 			}
@@ -166,8 +198,17 @@ export function validateDraft(
 				taxMinor,
 				grossMinor: effectiveGross,
 				categoryId: item.categoryId,
+				clientId,
 				provenance: item.provenance === 'ocr' ? 'ocr' : 'manual'
 			});
+		}
+		if (
+			strict &&
+			input.billable &&
+			clientAssignmentMode === 'line_item' &&
+			!lineItems.some((item) => item.clientId)
+		) {
+			fieldErrors.client = 'Assign at least one line item to a client';
 		}
 
 		const taxComponents: {
@@ -214,14 +255,19 @@ export function validateDraft(
 
 		if (
 			strict &&
+			activeLineItems.length > 0 &&
 			totalMinor !== null &&
 			Object.keys(fieldErrors).every(
 				(key) => !key.startsWith('lineItems.') && !key.startsWith('taxComponents.')
 			)
 		) {
 			const lineTotal = lineItems.reduce((total, item) => total + (item.grossMinor ?? 0), 0);
-			if (lineTotal !== totalMinor && lineTotal + taxTotal !== totalMinor) {
-				const taxSuffix = taxTotal > 0 ? ` plus separate tax ${(taxTotal / 100).toFixed(2)}` : '';
+			const balancedTotal = input.lineItemsIncludeTax ? lineTotal : lineTotal + taxTotal;
+			if (balancedTotal !== totalMinor) {
+				const taxSuffix =
+					!input.lineItemsIncludeTax && taxTotal > 0
+						? ` plus separate tax ${(taxTotal / 100).toFixed(2)}`
+						: '';
 				fieldErrors.lineItems = `Line items total ${(lineTotal / 100).toFixed(2)}${taxSuffix} but expense total is ${(totalMinor / 100).toFixed(2)}`;
 			}
 		}
@@ -237,12 +283,23 @@ export function validateDraft(
 			currency: currency as 'CAD' | 'USD' | 'EUR',
 			notes,
 			billable: input.billable,
-			clientId,
+			clientAssignmentMode,
+			clientIds,
 			paymentAccountId: input.paymentAccountId,
 			lineItems,
 			taxComponents
 		} satisfies NormalizedDraft);
 	}).pipe(Effect.flatten);
+}
+
+export function assignedClientIds(draft: NormalizedDraft): ReadonlyArray<string> {
+	return draft.clientAssignmentMode === 'expense'
+		? draft.clientIds
+		: [
+				...new Set(
+					draft.lineItems.map((item) => item.clientId).filter((id): id is string => id !== null)
+				)
+			];
 }
 
 function templateValuesFor(
@@ -411,7 +468,10 @@ export class ReviewService extends Context.Service<
 
 				const accountName =
 					refs.paymentAccounts.find((account) => account.id === draft.paymentAccountId)?.name ?? '';
-				const clientName = refs.clients.find((client) => client.id === draft.clientId)?.name ?? '';
+				const clientName = assignedClientIds(draft)
+					.map((id) => refs.clients.find((client) => client.id === id)?.name)
+					.filter((name): name is string => !!name)
+					.join(' + ');
 				const values = templateValuesFor(
 					draft,
 					{ paymentAccount: accountName, client: clientName },
@@ -476,7 +536,10 @@ export class ReviewService extends Context.Service<
 							data: {
 								targetRelativePath,
 								totalMinor: draft.totalMinor,
-								currency: draft.currency
+								currency: draft.currency,
+								lineItemsOmitted: draft.lineItems.length === 0,
+								clientAssignmentMode: draft.clientAssignmentMode,
+								clientIds: assignedClientIds(draft)
 							}
 						});
 						yield* integration.notifyApproved({
@@ -486,6 +549,13 @@ export class ReviewService extends Context.Service<
 							transactionDate: draft.transactionDate,
 							totalMinor: draft.totalMinor,
 							currency: draft.currency,
+							billable: draft.billable,
+							clientAssignmentMode: draft.clientAssignmentMode,
+							clientIds: assignedClientIds(draft),
+							lineItems: draft.lineItems.map((item, position) => ({
+								position,
+								clientId: item.clientId
+							})),
 							managedPath: targetRelativePath
 						});
 					}),

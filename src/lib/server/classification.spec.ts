@@ -214,7 +214,8 @@ describe('classification persistence', () => {
 					currency: 'CAD',
 					notes: '',
 					billable: false,
-					clientId: null,
+					clientAssignmentMode: 'expense',
+					clientIds: [],
 					paymentAccountId: null,
 					lineItems: [
 						{
@@ -225,6 +226,7 @@ describe('classification persistence', () => {
 							taxMinor: 0,
 							grossMinor: 3745,
 							categoryId: category.id,
+							clientId: null,
 							provenance: 'manual'
 						}
 					],

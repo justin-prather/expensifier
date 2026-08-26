@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
+
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -38,6 +40,20 @@
 	];
 
 	let activeFilter = $state<QueueFilter>('all');
+	let searchQuery = $state('');
+	const filterStorageKey = 'expensifier.queue-filter';
+
+	onMount(() => {
+		const savedFilter = sessionStorage.getItem(filterStorageKey);
+		if (filters.some((filter) => filter.id === savedFilter)) {
+			activeFilter = savedFilter as QueueFilter;
+		}
+	});
+
+	function selectFilter(filter: QueueFilter) {
+		activeFilter = filter;
+		sessionStorage.setItem(filterStorageKey, filter);
+	}
 
 	const reviewByDocument = $derived(new Map(data.review.map((entry) => [entry.documentId, entry])));
 
@@ -90,7 +106,23 @@
 		return displayStatus(item) === filter;
 	}
 
-	const filteredQueue = $derived(data.queue.filter((item) => matchesFilter(item, activeFilter)));
+	function matchesSearch(item: QueueItem): boolean {
+		const query = searchQuery.trim().toLocaleLowerCase();
+		if (!query) return true;
+		const status = displayStatus(item);
+		return [
+			item.document.originalFilename,
+			item.document.extension,
+			item.document.contentHash,
+			status,
+			statusLabel[status],
+			resultSummary(item) ?? ''
+		].some((value) => value.toLocaleLowerCase().includes(query));
+	}
+
+	const filteredQueue = $derived(
+		data.queue.filter((item) => matchesFilter(item, activeFilter) && matchesSearch(item))
+	);
 
 	function countFilter(filter: QueueFilter): number {
 		return data.queue.filter((item) => matchesFilter(item, filter)).length;
@@ -218,22 +250,39 @@
 				</span>
 			</div>
 
-			<div class="flex flex-wrap gap-2 border-b border-ink/20 px-5 py-3">
-				{#each filters as filter (filter.id)}
-					<button
-						type="button"
-						class={`px-2.5 py-1 font-mono text-xs font-bold uppercase ${activeFilter === filter.id ? 'bg-ink text-paper' : 'border border-ink/30 hover:bg-ink/10'}`}
-						onclick={() => (activeFilter = filter.id)}
-					>
-						{filter.label} ({countFilter(filter.id)})
-					</button>
-				{/each}
+			<div
+				class="flex flex-col gap-3 border-b border-ink/20 px-5 py-3 xl:flex-row xl:items-center xl:justify-between"
+			>
+				<div class="flex flex-wrap gap-2">
+					{#each filters as filter (filter.id)}
+						<button
+							type="button"
+							class={`px-2.5 py-1 font-mono text-xs font-bold uppercase ${activeFilter === filter.id ? 'bg-ink text-paper' : 'border border-ink/30 hover:bg-ink/10'}`}
+							onclick={() => selectFilter(filter.id)}
+						>
+							{filter.label} ({countFilter(filter.id)})
+						</button>
+					{/each}
+				</div>
+				<label class="block min-w-56 xl:w-72">
+					<span class="sr-only">Search expenses</span>
+					<input
+						type="search"
+						class="w-full border border-ink bg-white px-3 py-1.5 text-sm"
+						placeholder="Search current list..."
+						bind:value={searchQuery}
+					/>
+				</label>
 			</div>
 
 			{#if filteredQueue.length === 0}
 				<div class="p-10 text-center sm:p-16">
 					<p class="font-mono text-sm text-ink/60">
-						{activeFilter === 'all' ? 'INBOX CLEAR' : 'NOTHING IN THIS VIEW'}
+						{searchQuery.trim()
+							? 'NO MATCHING EXPENSES'
+							: activeFilter === 'all'
+								? 'INBOX CLEAR'
+								: 'NOTHING IN THIS VIEW'}
 					</p>
 					<p class="mx-auto mt-3 max-w-md text-sm leading-6 text-ink/70">
 						Drop a PDF, JPEG, or PNG into the configured inbox. Stable files are hashed, moved, and

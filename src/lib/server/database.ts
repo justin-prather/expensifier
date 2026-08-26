@@ -316,6 +316,29 @@ const migrations = SqliteMigrator.fromRecord({
 			WHERE related_entity_id IS NOT NULL AND type = 'classify_expense'
 				AND status IN ('pending', 'running')
 		`;
+	}),
+	'0008_multiple_expense_clients': Effect.gen(function* () {
+		const sql = yield* SqlClient.SqlClient;
+		yield* sql`
+			ALTER TABLE expenses ADD COLUMN client_assignment_mode TEXT NOT NULL DEFAULT 'expense'
+				CHECK (client_assignment_mode IN ('expense', 'line_item'))
+		`;
+		yield* sql`
+			CREATE TABLE expense_clients (
+				expense_id TEXT NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
+				client_id TEXT NOT NULL REFERENCES clients(id),
+				position INTEGER NOT NULL,
+				PRIMARY KEY (expense_id, client_id),
+				UNIQUE (expense_id, position)
+			)
+		`;
+		yield* sql`CREATE INDEX expense_clients_client ON expense_clients (client_id, expense_id)`;
+		yield* sql`
+			INSERT INTO expense_clients (expense_id, client_id, position)
+			SELECT id, client_id, 0 FROM expenses WHERE client_id IS NOT NULL
+		`;
+		yield* sql`ALTER TABLE expense_line_items ADD COLUMN client_id TEXT REFERENCES clients(id)`;
+		yield* sql`CREATE INDEX expense_line_items_client ON expense_line_items (client_id, expense_id)`;
 	})
 });
 

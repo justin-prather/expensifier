@@ -7,6 +7,13 @@ export interface ApprovedExpenseSummary {
 	readonly transactionDate: string;
 	readonly totalMinor: number;
 	readonly currency: string;
+	readonly billable: boolean;
+	readonly clientAssignmentMode: 'expense' | 'line_item';
+	readonly clientIds: ReadonlyArray<string>;
+	readonly lineItems: ReadonlyArray<{
+		readonly position: number;
+		readonly clientId: string | null;
+	}>;
 	readonly managedPath: string;
 }
 

@@ -28,6 +28,7 @@ export class IntakeService extends Context.Service<
 				const documents = yield* DocumentRepository;
 				const files = yield* FileLifecycleService;
 				const observations = new Map<string, Observation>();
+				const rejectedArchives = new Set<string>();
 				let watcher: FSWatcher | undefined;
 				let timer: ReturnType<typeof setInterval> | undefined;
 				let scanning = false;
@@ -60,6 +61,9 @@ export class IntakeService extends Context.Service<
 						const active = new Set(discovered.map((candidate) => candidate.sourceIdentity));
 						const now = Date.now();
 						for (const candidate of discovered) {
+							if (candidate.kind === 'archive' && rejectedArchives.has(candidate.sourceIdentity)) {
+								continue;
+							}
 							const previous = observations.get(candidate.sourceIdentity);
 							const changed =
 								!previous ||
@@ -77,11 +81,34 @@ export class IntakeService extends Context.Service<
 							if (!observed || now - observed.unchangedSince < config.intakeStableMilliseconds) {
 								continue;
 							}
-							const outcome = yield* Effect.result(ingest(candidate));
-							if (Result.isSuccess(outcome)) observations.delete(candidate.sourceIdentity);
+							if (candidate.kind === 'archive') {
+								const outcome = yield* Effect.result(files.expandArchive(candidate));
+								if (Result.isSuccess(outcome)) {
+									for (const extracted of outcome.success) {
+										yield* Effect.result(ingest(extracted));
+									}
+									observations.delete(candidate.sourceIdentity);
+									logOperationalEvent('info', 'archive_expanded', {
+										component: 'application',
+										status: 'succeeded'
+									});
+								} else {
+									rejectedArchives.add(candidate.sourceIdentity);
+									logOperationalEvent('warn', 'archive_rejected', {
+										component: 'application',
+										errorCode: outcome.failure.code
+									});
+								}
+							} else {
+								const outcome = yield* Effect.result(ingest(candidate));
+								if (Result.isSuccess(outcome)) observations.delete(candidate.sourceIdentity);
+							}
 						}
 						for (const identity of observations.keys()) {
 							if (!active.has(identity)) observations.delete(identity);
+						}
+						for (const identity of rejectedArchives) {
+							if (!active.has(identity)) rejectedArchives.delete(identity);
 						}
 					} finally {
 						scanning = false;

@@ -6,6 +6,7 @@ import { DocumentRepository } from '$lib/server/documents';
 import { ExpenseRepository, type ExpenseDraftInput } from '$lib/server/expenses';
 import { JobService } from '$lib/server/jobs';
 import { OcrRunRepository } from '$lib/server/ocr-runs';
+import { ReferenceService, type ReferenceKind } from '$lib/server/reference';
 import { ReviewService, validateDraft } from '$lib/server/review';
 import { VendorRuleService } from '$lib/server/rules';
 import { appRuntime } from '$lib/server/runtime';
@@ -25,6 +26,7 @@ const LineItemPayload = Schema.Struct({
 	taxAmount: Schema.String,
 	grossAmount: Schema.String,
 	categoryId: Schema.String,
+	clientId: Schema.NullOr(Schema.String),
 	provenance: Schema.optional(Schema.Literals(['ocr', 'manual']))
 });
 
@@ -41,8 +43,11 @@ const DraftPayload = Schema.Struct({
 	currency: Schema.String,
 	notes: Schema.String,
 	billable: Schema.Boolean,
-	clientId: Schema.NullOr(Schema.String),
+	clientAssignmentMode: Schema.Literals(['expense', 'line_item']),
+	clientIds: Schema.Array(Schema.String),
 	paymentAccountId: Schema.NullOr(Schema.String),
+	lineItemsIncludeTax: Schema.Boolean,
+	approveWithoutLineItems: Schema.Boolean,
 	lineItems: Schema.Array(LineItemPayload),
 	taxComponents: Schema.Array(TaxComponentPayload),
 	classificationSuggestionId: Schema.optional(Schema.NullOr(Schema.String))
@@ -126,8 +131,18 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 	const accountName =
 		refs.paymentAccounts.find((account) => account.id === detail.expense.paymentAccountId)?.name ??
 		'';
-	const clientName =
-		refs.clients.find((client) => client.id === detail.expense.clientId)?.name ?? '';
+	const assignedClientIds =
+		detail.expense.clientAssignmentMode === 'expense'
+			? detail.clientIds
+			: [
+					...new Set(
+						detail.lineItems.map((item) => item.clientId).filter((id): id is string => id !== null)
+					)
+				];
+	const clientName = assignedClientIds
+		.map((id) => refs.clients.find((client) => client.id === id)?.name)
+		.filter((name): name is string => !!name)
+		.join(' + ');
 	const templateValues = {
 		date: detail.expense.transactionDate ?? '',
 		vendor: detail.expense.vendor ?? '',
@@ -196,7 +211,8 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 			currency: detail.expense.currency,
 			notes: detail.expense.notes,
 			billable: detail.expense.billable,
-			clientId: detail.expense.clientId,
+			clientAssignmentMode: detail.expense.clientAssignmentMode,
+			clientIds: detail.clientIds,
 			paymentAccountId: detail.expense.paymentAccountId,
 			rejectionReason: detail.expense.rejectionReason,
 			reopenedAt: detail.expense.reopenedAt
@@ -209,6 +225,7 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 			taxAmount: item.taxMinor !== null ? (item.taxMinor / 100).toFixed(2) : '',
 			grossAmount: item.grossMinor !== null ? (item.grossMinor / 100).toFixed(2) : '',
 			categoryId: item.categoryId ?? '',
+			clientId: item.clientId,
 			provenance: item.provenance
 		})),
 		taxComponents: detail.taxComponents.map((component) => ({
@@ -422,6 +439,33 @@ export const actions: Actions = {
 		}
 	},
 
+	'create-reference': async ({ locals, params, request }) => {
+		const user = requirePermission(locals.user, 'expenses:edit');
+		if (!UUID_PATTERN.test(params.id)) return fail(400, { message: 'Invalid expense' });
+		const expense = await appRuntime.runPromise(
+			ExpenseRepository.use((repository) => repository.findById(params.id))
+		);
+		if (!expense) return fail(404, { message: 'Expense not found' });
+		const form = await request.formData();
+		const kindValue = form.get('kind');
+		const name = form.get('name');
+		if ((kindValue !== 'client' && kindValue !== 'category') || typeof name !== 'string') {
+			return fail(400, { message: 'Invalid reference' });
+		}
+		const kind: ReferenceKind = kindValue;
+		const result = await appRuntime.runPromise(
+			Effect.result(
+				ReferenceService.use((service) =>
+					service.create(kind, name, { id: user.id, label: user.email ?? user.id })
+				)
+			)
+		);
+		if (Result.isFailure(result)) return fail(400, { message: result.failure.message });
+		return {
+			reference: { id: result.success.id, name: result.success.name }
+		};
+	},
+
 	'suggestion-outcome': async ({ locals, params, request }) => {
 		const user = requirePermission(locals.user, 'expenses:edit');
 		if (!UUID_PATTERN.test(params.id)) return fail(400, { message: 'Invalid expense' });
@@ -463,7 +507,20 @@ export const actions: Actions = {
 				const templates = yield* TemplateService;
 				const accountName =
 					refs.paymentAccounts.find((account) => account.id === draft.paymentAccountId)?.name ?? '';
-				const clientName = refs.clients.find((client) => client.id === draft.clientId)?.name ?? '';
+				const assignedClientIds =
+					draft.clientAssignmentMode === 'expense'
+						? draft.clientIds
+						: [
+								...new Set(
+									draft.lineItems
+										.map((item) => item.clientId)
+										.filter((id): id is string => id !== null)
+								)
+							];
+				const clientName = assignedClientIds
+					.map((id) => refs.clients.find((client) => client.id === id)?.name)
+					.filter((name): name is string => !!name)
+					.join(' + ');
 				const documentExtension = new URL(request.url).searchParams.get('extension') ?? 'pdf';
 				const values = {
 					date: draft.transactionDate,

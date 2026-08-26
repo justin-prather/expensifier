@@ -21,7 +21,7 @@ function usageFilter(kind: ReferenceKind): string {
 		case 'category':
 			return 'EXISTS (SELECT 1 FROM expense_line_items WHERE expense_line_items.category_id = t.id)\n\t\t\t\t\t\tOR EXISTS (SELECT 1 FROM vendor_rules WHERE vendor_rules.category_id = t.id)';
 		case 'client':
-			return 'EXISTS (SELECT 1 FROM expenses WHERE expenses.client_id = t.id)\n\t\t\t\t\t\tOR EXISTS (SELECT 1 FROM vendor_rules WHERE vendor_rules.client_id = t.id)';
+			return 'EXISTS (SELECT 1 FROM expenses WHERE expenses.client_id = t.id)\n\t\t\t\t\t\tOR EXISTS (SELECT 1 FROM expense_clients WHERE expense_clients.client_id = t.id)\n\t\t\t\t\t\tOR EXISTS (SELECT 1 FROM expense_line_items WHERE expense_line_items.client_id = t.id)\n\t\t\t\t\t\tOR EXISTS (SELECT 1 FROM vendor_rules WHERE vendor_rules.client_id = t.id)';
 	}
 }
 

@@ -2,7 +2,14 @@
 	import { deserialize, enhance } from '$app/forms';
 	import { goto, invalidateAll } from '$app/navigation';
 	import DocumentViewer from '$lib/components/DocumentViewer.svelte';
-	import { parseAmountToMinor } from '$lib/money';
+	import ReferenceCombobox from '$lib/components/ReferenceCombobox.svelte';
+	import ReferenceMultiCombobox from '$lib/components/ReferenceMultiCombobox.svelte';
+	import {
+		addedTaxMinor,
+		includedTaxMinor,
+		parseAmountToMinor,
+		parseSignedAmountToMinor
+	} from '$lib/money';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -16,6 +23,7 @@
 		taxAmount: string;
 		grossAmount: string;
 		categoryId: string;
+		clientId: string | null;
 		provenance: 'ocr' | 'manual';
 	};
 
@@ -31,12 +39,16 @@
 	let currency = $state(data.expense.currency ?? 'CAD');
 	let notes = $state(data.expense.notes ?? '');
 	let billable = $state(data.expense.billable);
-	let clientId = $state<string | null>(data.expense.clientId);
+	let clientAssignmentMode = $state<'expense' | 'line_item'>(data.expense.clientAssignmentMode);
+	let clientIds = $state<string[]>([...data.expense.clientIds]);
 	let paymentAccountId = $state<string | null>(data.expense.paymentAccountId);
+	let bulkCategoryId = $state<string | null>(null);
 	let lineItems = $state<LineItemRow[]>(
 		data.lineItems.length > 0 ? data.lineItems.map((item) => ({ ...item })) : [emptyLineItem()]
 	);
 	let taxComponents = $state<TaxRow[]>(data.taxComponents.map((item) => ({ ...item })));
+	let lineItemsIncludeTax = $state(inferLineItemsIncludeTax());
+	let approveWithoutLineItems = $state(false);
 
 	let fieldErrors = $state<Record<string, string>>({});
 	let notice = $state<string | null>(null);
@@ -46,6 +58,8 @@
 	let dismissedAiSuggestionId = $state<string | null>(null);
 	let appliedAiSuggestionId = $state<string | null>(null);
 	let retryingClassification = $state(false);
+	const hasActiveLineItems = $derived(lineItems.some(lineItemHasContent));
+	const noLineItemsOverrideApplies = $derived(approveWithoutLineItems && !hasActiveLineItems);
 
 	async function refreshClassification(previousRunId: string | undefined) {
 		for (let attempt = 0; attempt < 30; attempt += 1) {
@@ -67,8 +81,22 @@
 			taxAmount: '',
 			grossAmount: '',
 			categoryId: '',
+			clientId: null,
 			provenance: 'manual'
 		};
+	}
+
+	function lineItemHasContent(row: LineItemRow): boolean {
+		return [
+			row.description,
+			row.quantity,
+			row.unitPrice,
+			row.netAmount,
+			row.taxAmount,
+			row.grossAmount,
+			row.categoryId,
+			row.clientId ?? ''
+		].some((value) => value.trim() !== '');
 	}
 
 	const payload = $derived(
@@ -79,8 +107,11 @@
 			currency,
 			notes,
 			billable,
-			clientId,
+			clientAssignmentMode,
+			clientIds,
 			paymentAccountId,
+			lineItemsIncludeTax,
+			approveWithoutLineItems: noLineItemsOverrideApplies,
 			lineItems,
 			taxComponents,
 			classificationSuggestionId: appliedAiSuggestionId
@@ -88,10 +119,10 @@
 	);
 
 	function rowEffectiveGross(row: LineItemRow): number | null {
-		const gross = row.grossAmount.trim() === '' ? null : parseAmountToMinor(row.grossAmount);
+		const gross = row.grossAmount.trim() === '' ? null : parseSignedAmountToMinor(row.grossAmount);
 		if (gross !== null) return gross;
-		const net = row.netAmount.trim() === '' ? null : parseAmountToMinor(row.netAmount);
-		const tax = row.taxAmount.trim() === '' ? null : parseAmountToMinor(row.taxAmount);
+		const net = row.netAmount.trim() === '' ? null : parseSignedAmountToMinor(row.netAmount);
+		const tax = row.taxAmount.trim() === '' ? null : parseSignedAmountToMinor(row.taxAmount);
 		if (net === null && tax === null) return null;
 		return (net ?? 0) + (tax ?? 0);
 	}
@@ -103,11 +134,32 @@
 		taxComponents.reduce((sum, component) => sum + (parseAmountToMinor(component.amount) ?? 0), 0)
 	);
 	const totalMinor = $derived(total.trim() === '' ? null : parseAmountToMinor(total));
+	const balancingTotal = $derived(lineTotal + (lineItemsIncludeTax ? 0 : taxComponentTotal));
+	const discrepancy = $derived(totalMinor === null ? null : balancingTotal - totalMinor);
 	const balanced = $derived(
-		totalMinor !== null &&
-			(lineTotal === totalMinor || lineTotal + taxComponentTotal === totalMinor) &&
-			lineItems.length > 0
+		noLineItemsOverrideApplies || (totalMinor !== null && discrepancy === 0 && hasActiveLineItems)
 	);
+
+	function inferLineItemsIncludeTax(): boolean {
+		if (data.expense.totalMinor === null || data.lineItems.length === 0) return true;
+		const savedLineTotal = data.lineItems.reduce((sum, row) => {
+			const gross = parseSignedAmountToMinor(row.grossAmount);
+			if (gross !== null) return sum + gross;
+			return (
+				sum +
+				(parseSignedAmountToMinor(row.netAmount) ?? 0) +
+				(parseSignedAmountToMinor(row.taxAmount) ?? 0)
+			);
+		}, 0);
+		const savedTaxTotal = data.taxComponents.reduce(
+			(sum, component) => sum + (parseAmountToMinor(component.amount) ?? 0),
+			0
+		);
+		return !(
+			savedLineTotal !== data.expense.totalMinor &&
+			savedLineTotal + savedTaxTotal === data.expense.totalMinor
+		);
+	}
 
 	function addLineItem() {
 		lineItems = [...lineItems, emptyLineItem()];
@@ -127,7 +179,19 @@
 	}
 
 	function gstAmount(): string {
-		return totalMinor === null ? '' : (Math.round(totalMinor * 0.05) / 100).toFixed(2);
+		const baseMinor = lineTotal > 0 ? lineTotal : lineItemsIncludeTax ? totalMinor : null;
+		if (baseMinor === null) return '';
+		const amountMinor = lineItemsIncludeTax
+			? includedTaxMinor(baseMinor, 5)
+			: addedTaxMinor(baseMinor, 5);
+		return (amountMinor / 100).toFixed(2);
+	}
+
+	function setLineItemsIncludeTax(checked: boolean) {
+		lineItemsIncludeTax = checked;
+		taxComponents = taxComponents.map((component) =>
+			component.label === 'GST' ? { ...component, amount: gstAmount() } : component
+		);
 	}
 
 	function prefillTaxComponent(index: number) {
@@ -170,6 +234,7 @@
 				taxAmount: item.taxAmount?.value ? Number(item.taxAmount.value).toFixed(2) : '',
 				grossAmount: item.grossAmount?.value ? Number(item.grossAmount.value).toFixed(2) : '',
 				categoryId: '',
+				clientId: null,
 				provenance: 'ocr' as const
 			}));
 		}
@@ -185,7 +250,10 @@
 		if (!suggestion) return;
 		vendor = suggestion.vendorName;
 		if (suggestion.paymentAccountId) paymentAccountId = suggestion.paymentAccountId;
-		if (suggestion.clientId) clientId = suggestion.clientId;
+		if (suggestion.clientId) {
+			clientAssignmentMode = 'expense';
+			clientIds = [suggestion.clientId];
+		}
 		if (suggestion.categoryId) {
 			lineItems = lineItems.map((row) =>
 				row.categoryId === '' ? { ...row, categoryId: suggestion.categoryId! } : row
@@ -221,7 +289,10 @@
 		if (!aiSuggestion) return;
 		const selected = aiSuggestion;
 		if (selected.paymentAccountId) paymentAccountId = selected.paymentAccountId;
-		if (selected.clientId) clientId = selected.clientId;
+		if (selected.clientId) {
+			clientAssignmentMode = 'expense';
+			clientIds = [selected.clientId];
+		}
 		if (selected.billable !== null) billable = selected.billable;
 		if (selected.categoryId) {
 			lineItems = lineItems.map((row) =>
@@ -243,9 +314,70 @@
 
 	function markLineItemManual(index: number) {
 		const row = lineItems[index];
+		if (row && lineItemHasContent(row)) approveWithoutLineItems = false;
 		if (row && row.provenance !== 'manual') {
 			lineItems[index] = { ...row, provenance: 'manual' };
 		}
+	}
+
+	function selectCategory(index: number, categoryId: string | null) {
+		const row = lineItems[index];
+		if (categoryId) approveWithoutLineItems = false;
+		if (row) lineItems[index] = { ...row, categoryId: categoryId ?? '', provenance: 'manual' };
+	}
+
+	function applyCategoryToAll(categoryId: string | null) {
+		bulkCategoryId = categoryId;
+		if (!categoryId) return;
+		for (const row of lineItems) {
+			row.categoryId = categoryId;
+			row.provenance = 'manual';
+		}
+		fieldErrors = Object.fromEntries(
+			Object.entries(fieldErrors).filter(([key]) => !/^lineItems\.\d+\.categoryId$/.test(key))
+		);
+	}
+
+	function selectLineClient(index: number, clientId: string | null) {
+		const row = lineItems[index];
+		if (row) lineItems[index] = { ...row, clientId, provenance: 'manual' };
+	}
+
+	function setClientAssignmentMode(mode: 'expense' | 'line_item') {
+		clientAssignmentMode = mode;
+		if (mode === 'expense') {
+			for (const row of lineItems) row.clientId = null;
+		} else {
+			clientIds = [];
+		}
+	}
+
+	function setBillable(checked: boolean) {
+		billable = checked;
+		if (!checked) {
+			clientIds = [];
+			for (const row of lineItems) row.clientId = null;
+		}
+	}
+
+	async function createReference(kind: 'client' | 'category', name: string) {
+		const body = new FormData();
+		body.set('kind', kind);
+		body.set('name', name);
+		const response = await fetch('?/create-reference', { method: 'POST', body });
+		const result = deserialize(await response.text());
+		if (result.type === 'success' && result.data) {
+			const resultData = result.data as { reference?: { id: string; name: string } };
+			if (resultData.reference) {
+				await invalidateAll();
+				return resultData.reference;
+			}
+		}
+		throw new Error(
+			result.type === 'failure' && typeof result.data?.message === 'string'
+				? result.data.message
+				: `Unable to create ${kind}`
+		);
 	}
 
 	async function refreshPreview() {
@@ -396,7 +528,7 @@
 	{/if}
 
 	<section class="grid gap-6 py-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-		<div class="xl:sticky xl:top-6 xl:self-start">
+		<div class="xl:sticky xl:top-6 xl:h-[calc(100dvh-3rem)] xl:self-start">
 			<DocumentViewer
 				documentId={data.document.id}
 				mimeType={data.document.mimeType}
@@ -582,26 +714,59 @@
 					<div class="text-sm font-semibold">
 						Billable
 						<label class="mt-1 flex items-center gap-2 font-normal">
-							<input type="checkbox" bind:checked={billable} class="size-4" />
-							This expense is billable to a client
+							<input
+								type="checkbox"
+								checked={billable}
+								onchange={(event) => setBillable(event.currentTarget.checked)}
+								class="size-4"
+							/>
+							This expense is billable to clients
 						</label>
 					</div>
 					{#if billable}
-						<label class="text-sm font-semibold">
-							Client
-							<select
-								class="mt-1 w-full border border-ink bg-paper px-3 py-2 font-normal"
-								bind:value={clientId}
-							>
-								<option value={null}>Select a client…</option>
-								{#each data.referenceData.clients as client (client.id)}
-									<option value={client.id}>{client.name}</option>
-								{/each}
-							</select>
-							{#if errorText('client')}<span class="mt-1 block font-mono text-xs text-rose-700"
-									>{errorText('client')}</span
-								>{/if}
-						</label>
+						<div class="border border-ink/20 bg-paper p-3 sm:col-span-2">
+							<p class="text-xs font-bold uppercase">Client assignment</p>
+							<div class="mt-2 flex flex-wrap gap-4 text-sm">
+								<label class="flex items-center gap-2">
+									<input
+										type="radio"
+										name="client-assignment-mode"
+										checked={clientAssignmentMode === 'expense'}
+										onchange={() => setClientAssignmentMode('expense')}
+									/>
+									Whole expense
+								</label>
+								<label class="flex items-center gap-2">
+									<input
+										type="radio"
+										name="client-assignment-mode"
+										checked={clientAssignmentMode === 'line_item'}
+										onchange={() => setClientAssignmentMode('line_item')}
+									/>
+									By line item
+								</label>
+							</div>
+							{#if clientAssignmentMode === 'expense'}
+								<div class="mt-3">
+									<ReferenceMultiCombobox
+										id="expense-clients"
+										label="Clients"
+										items={data.referenceData.clients}
+										values={clientIds}
+										error={errorText('client')}
+										onchange={(ids) => (clientIds = ids)}
+										oncreate={(name) => createReference('client', name)}
+									/>
+								</div>
+							{:else}
+								<p class="mt-3 text-xs text-ink/65">
+									Assign clients on any applicable line items below. Unassigned lines are allowed.
+								</p>
+								{#if errorText('client')}<span class="mt-1 block font-mono text-xs text-rose-700"
+										>{errorText('client')}</span
+									>{/if}
+							{/if}
+						</div>
 					{/if}
 					<label class="text-sm font-semibold sm:col-span-2">
 						Notes
@@ -618,25 +783,75 @@
 
 			<div class="border-2 border-ink bg-white/40 p-5">
 				<div class="flex flex-wrap items-center justify-between gap-2">
-					<h2 class="text-lg font-semibold">Line items</h2>
+					<div>
+						<h2 class="text-lg font-semibold">Line items</h2>
+						<label class="mt-1 flex items-center gap-2 text-xs font-semibold">
+							<input
+								type="checkbox"
+								class="size-4"
+								checked={lineItemsIncludeTax}
+								onchange={(event) => setLineItemsIncludeTax(event.currentTarget.checked)}
+							/>
+							Line amounts include tax
+						</label>
+						{#if !hasActiveLineItems}
+							<label class="mt-1 flex items-center gap-2 text-xs font-semibold text-amber-800">
+								<input type="checkbox" class="size-4" bind:checked={approveWithoutLineItems} />
+								Approve without line items
+							</label>
+						{/if}
+					</div>
 					<span
 						class={`px-2 py-1 font-mono text-xs font-bold uppercase ${balanced ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'}`}
 					>
-						{(lineTotal / 100).toFixed(2)} lines
-						{#if taxComponentTotal > 0 && lineTotal !== totalMinor}
-							+ {(taxComponentTotal / 100).toFixed(2)} tax
+						{#if noLineItemsOverrideApplies}
+							No line items · approval override
+							{#if taxComponentTotal > 0}
+								· {(taxComponentTotal / 100).toFixed(2)} tax recorded
+							{/if}
+						{:else}
+							{(lineTotal / 100).toFixed(2)} lines
+							{#if taxComponentTotal > 0}
+								{#if lineItemsIncludeTax}
+									({(taxComponentTotal / 100).toFixed(2)} tax included in lines)
+								{:else}
+									+ {(taxComponentTotal / 100).toFixed(2)} separate tax
+								{/if}
+							{/if}
+							= {(balancingTotal / 100).toFixed(2)} / {totalMinor !== null
+								? (totalMinor / 100).toFixed(2)
+								: '—'}
+							{#if balanced}
+								balanced
+							{:else if discrepancy !== null}
+								{(Math.abs(discrepancy) / 100).toFixed(2)} {discrepancy > 0 ? 'over' : 'short'}
+							{:else}
+								unbalanced
+							{/if}
 						{/if}
-						/ {totalMinor !== null ? (totalMinor / 100).toFixed(2) : '—'}
-						{balanced ? 'balanced' : 'unbalanced'}
 					</span>
 				</div>
 				{#if errorText('lineItems')}<p class="mt-2 font-mono text-xs text-rose-700">
 						{errorText('lineItems')}
 					</p>{/if}
+				<div class="mt-3 max-w-sm border border-ink/20 bg-paper p-3">
+					<ReferenceCombobox
+						id="all-line-items-category"
+						label="Category for all line items"
+						items={data.referenceData.categories}
+						value={bulkCategoryId}
+						placeholder="Search or create a category..."
+						compact
+						onselect={applyCategoryToAll}
+						oncreate={(name) => createReference('category', name)}
+					/>
+				</div>
 				<div class="mt-4 space-y-3">
 					{#each lineItems as row, index (index)}
 						<div class="border border-ink/30 bg-paper p-3">
-							<div class="grid gap-2 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_auto]">
+							<div
+								class={`grid gap-2 ${billable && clientAssignmentMode === 'line_item' ? 'sm:grid-cols-2 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_auto]' : 'sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_auto]'}`}
+							>
 								<label class="text-xs font-bold uppercase">
 									<span class="flex items-center gap-2">
 										Description
@@ -659,23 +874,30 @@
 											>{errorText(`lineItems.${index}.description`)}</span
 										>{/if}
 								</label>
-								<label class="text-xs font-bold uppercase">
-									Category
-									<select
-										class="mt-1 w-full border border-ink bg-white px-2 py-1.5 text-sm font-normal"
-										bind:value={row.categoryId}
-										onchange={() => markLineItemManual(index)}
-									>
-										<option value="">Select…</option>
-										{#each data.referenceData.categories as category (category.id)}
-											<option value={category.id}>{category.name}</option>
-										{/each}
-									</select>
-									{#if errorText(`lineItems.${index}.categoryId`)}<span
-											class="block font-mono text-[11px] text-rose-700"
-											>{errorText(`lineItems.${index}.categoryId`)}</span
-										>{/if}
-								</label>
+								<ReferenceCombobox
+									id={`line-item-${index}-category`}
+									label="Category"
+									items={data.referenceData.categories}
+									value={row.categoryId}
+									placeholder="Search categories…"
+									compact
+									error={errorText(`lineItems.${index}.categoryId`)}
+									onselect={(id) => selectCategory(index, id)}
+									oncreate={(name) => createReference('category', name)}
+								/>
+								{#if billable && clientAssignmentMode === 'line_item'}
+									<ReferenceCombobox
+										id={`line-item-${index}-client`}
+										label="Client (optional)"
+										items={data.referenceData.clients}
+										value={row.clientId}
+										placeholder="Search clients..."
+										compact
+										error={errorText(`lineItems.${index}.clientId`)}
+										onselect={(id) => selectLineClient(index, id)}
+										oncreate={(name) => createReference('client', name)}
+									/>
+								{/if}
 								<button
 									type="button"
 									class="self-end border border-ink px-2 py-1.5 font-mono text-xs font-bold uppercase hover:bg-rose-700 hover:text-white"

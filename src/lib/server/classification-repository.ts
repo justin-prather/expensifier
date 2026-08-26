@@ -385,7 +385,9 @@ export class ClassificationRepository extends Context.Service<
 					const accepted =
 						(suggestion.paymentAccountId === null ||
 							suggestion.paymentAccountId === draft.paymentAccountId) &&
-						(suggestion.clientId === null || suggestion.clientId === draft.clientId) &&
+						(suggestion.clientId === null ||
+							(draft.clientAssignmentMode === 'expense' &&
+								draft.clientIds.includes(suggestion.clientId))) &&
 						(suggestion.billable === null || (suggestion.billable === 1) === draft.billable) &&
 						(suggestion.categoryId === null ||
 							(draft.lineItems.length > 0 &&

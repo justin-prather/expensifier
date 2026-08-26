@@ -18,6 +18,7 @@ export class Expense extends Schema.Class<Expense>('Expense')({
 	notes: Schema.NullOr(Schema.String),
 	billable: Schema.Boolean,
 	clientId: Schema.NullOr(Schema.String),
+	clientAssignmentMode: Schema.Literals(['expense', 'line_item']),
 	paymentAccountId: Schema.NullOr(Schema.String),
 	rejectionReason: Schema.NullOr(Schema.String),
 	pendingMoveJson: Schema.NullOr(Schema.String),
@@ -42,6 +43,7 @@ export class LineItem extends Schema.Class<LineItem>('LineItem')({
 	taxMinor: Schema.NullOr(Schema.Number),
 	grossMinor: Schema.NullOr(Schema.Number),
 	categoryId: Schema.NullOr(Schema.String),
+	clientId: Schema.NullOr(Schema.String),
 	provenance: Schema.Literals(['ocr', 'manual'])
 }) {}
 
@@ -73,6 +75,7 @@ export interface LineItemInput {
 	readonly taxAmount: string;
 	readonly grossAmount: string;
 	readonly categoryId: string;
+	readonly clientId?: string | null;
 	readonly provenance?: 'ocr' | 'manual';
 }
 
@@ -89,8 +92,11 @@ export interface ExpenseDraftInput {
 	readonly currency: string;
 	readonly notes: string;
 	readonly billable: boolean;
-	readonly clientId: string | null;
+	readonly clientAssignmentMode: 'expense' | 'line_item';
+	readonly clientIds: ReadonlyArray<string>;
 	readonly paymentAccountId: string | null;
+	readonly lineItemsIncludeTax: boolean;
+	readonly approveWithoutLineItems: boolean;
 	readonly lineItems: ReadonlyArray<LineItemInput>;
 	readonly taxComponents: ReadonlyArray<TaxComponentInput>;
 }
@@ -102,7 +108,8 @@ export interface NormalizedDraft {
 	readonly currency: 'CAD' | 'USD' | 'EUR';
 	readonly notes: string;
 	readonly billable: boolean;
-	readonly clientId: string | null;
+	readonly clientAssignmentMode: 'expense' | 'line_item';
+	readonly clientIds: ReadonlyArray<string>;
 	readonly paymentAccountId: string | null;
 	readonly lineItems: ReadonlyArray<{
 		readonly description: string;
@@ -112,6 +119,7 @@ export interface NormalizedDraft {
 		readonly taxMinor: number | null;
 		readonly grossMinor: number | null;
 		readonly categoryId: string;
+		readonly clientId: string | null;
 		readonly provenance: 'ocr' | 'manual';
 	}>;
 	readonly taxComponents: ReadonlyArray<{
@@ -138,6 +146,7 @@ interface MoveIntent {
 const expenseColumns = `
 	id, document_id AS documentId, status, vendor, transaction_date AS transactionDate,
 	total_minor AS totalMinor, currency, notes, billable, client_id AS clientId,
+	client_assignment_mode AS clientAssignmentMode,
 	payment_account_id AS paymentAccountId, rejection_reason AS rejectionReason,
 	pending_move_json AS pendingMoveJson, approved_at AS approvedAt, approved_by AS approvedBy,
 	rejected_at AS rejectedAt, rejected_by AS rejectedBy, reopened_at AS reopenedAt,
@@ -174,6 +183,7 @@ export class ExpenseRepository extends Context.Service<
 		readonly findByDocumentId: (documentId: string) => Effect.Effect<Expense | null>;
 		readonly detailFor: (expenseId: string) => Effect.Effect<{
 			readonly expense: Expense;
+			readonly clientIds: ReadonlyArray<string>;
 			readonly lineItems: ReadonlyArray<LineItem>;
 			readonly taxComponents: ReadonlyArray<TaxComponent>;
 		} | null>;
@@ -261,8 +271,12 @@ export class ExpenseRepository extends Context.Service<
 				const lineItemRows = yield* sql<LineItem>`
 					SELECT id, expense_id AS expenseId, position, description, quantity,
 						unit_price_minor AS unitPriceMinor, net_minor AS netMinor, tax_minor AS taxMinor,
-						gross_minor AS grossMinor, category_id AS categoryId, provenance
+						gross_minor AS grossMinor, category_id AS categoryId, client_id AS clientId, provenance
 					FROM expense_line_items WHERE expense_id = ${expenseId} ORDER BY position
+				`;
+				const clientRows = yield* sql<{ readonly clientId: string }>`
+					SELECT client_id AS clientId FROM expense_clients
+					WHERE expense_id = ${expenseId} ORDER BY position
 				`;
 				const taxRows = yield* sql<TaxComponent>`
 					SELECT id, expense_id AS expenseId, label, amount_minor AS amountMinor,
@@ -271,6 +285,12 @@ export class ExpenseRepository extends Context.Service<
 				`;
 				return {
 					expense,
+					clientIds:
+						clientRows.length > 0
+							? clientRows.map((row) => row.clientId)
+							: expense.clientId
+								? [expense.clientId]
+								: [],
 					lineItems: lineItemRows.map((row) => new LineItem(row)),
 					taxComponents: taxRows.map((row) => new TaxComponent(row))
 				};
@@ -312,6 +332,10 @@ export class ExpenseRepository extends Context.Service<
 				draft: NormalizedDraft
 			) {
 				const now = new Date().toISOString();
+				const legacyClientId =
+					draft.clientAssignmentMode === 'expense' && draft.clientIds.length === 1
+						? draft.clientIds[0]!
+						: null;
 				yield* sql.withTransaction(
 					Effect.gen(function* () {
 						yield* sql`
@@ -319,20 +343,30 @@ export class ExpenseRepository extends Context.Service<
 								vendor = ${draft.vendor}, transaction_date = ${draft.transactionDate},
 								total_minor = ${draft.totalMinor}, currency = ${draft.currency},
 								notes = ${draft.notes}, billable = ${draft.billable ? 1 : 0},
-								client_id = ${draft.clientId}, payment_account_id = ${draft.paymentAccountId},
+								client_id = ${legacyClientId},
+								client_assignment_mode = ${draft.clientAssignmentMode},
+								payment_account_id = ${draft.paymentAccountId},
 								updated_at = ${now}
 							WHERE id = ${expenseId}
 						`;
+						yield* sql`DELETE FROM expense_clients WHERE expense_id = ${expenseId}`;
+						for (const [position, clientId] of draft.clientIds.entries()) {
+							yield* sql`
+								INSERT INTO expense_clients (expense_id, client_id, position)
+								VALUES (${expenseId}, ${clientId}, ${position})
+							`;
+						}
 						yield* sql`DELETE FROM expense_line_items WHERE expense_id = ${expenseId}`;
 						for (const [index, item] of draft.lineItems.entries()) {
 							yield* sql`
 								INSERT INTO expense_line_items (
 									id, expense_id, position, description, quantity, unit_price_minor,
-									net_minor, tax_minor, gross_minor, category_id, provenance, created_at, updated_at
+									net_minor, tax_minor, gross_minor, category_id, client_id, provenance,
+									created_at, updated_at
 								) VALUES (
 									${crypto.randomUUID()}, ${expenseId}, ${index}, ${item.description},
 									${item.quantity}, ${item.unitPriceMinor}, ${item.netMinor}, ${item.taxMinor},
-									${item.grossMinor}, ${item.categoryId},
+									${item.grossMinor}, ${item.categoryId}, ${item.clientId},
 									${item.provenance === 'ocr' ? 'ocr' : 'manual'}, ${now}, ${now}
 								)
 							`;

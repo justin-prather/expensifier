@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatMinor, parseAmountToMinor, parseOptionalAmountToMinor, sumMinors } from './money';
+import {
+	addedTaxMinor,
+	formatMinor,
+	includedTaxMinor,
+	parseAmountToMinor,
+	parseOptionalAmountToMinor,
+	parseOptionalSignedAmountToMinor,
+	parseSignedAmountToMinor,
+	sumMinors
+} from './money';
 
 describe('parseAmountToMinor', () => {
 	it('parses plain decimal amounts into integer minor units', () => {
@@ -53,9 +62,46 @@ describe('parseOptionalAmountToMinor', () => {
 	});
 });
 
+describe('parseSignedAmountToMinor', () => {
+	it('parses positive and negative line-item amounts', () => {
+		expect(parseSignedAmountToMinor('-12.34')).toBe(-1234);
+		expect(parseSignedAmountToMinor('-$1,234.56')).toBe(-123456);
+		expect(parseSignedAmountToMinor('5.00')).toBe(500);
+	});
+
+	it('rejects malformed signed amounts', () => {
+		expect(parseSignedAmountToMinor('--1.00')).toBeNull();
+		expect(parseSignedAmountToMinor('-')).toBeNull();
+	});
+});
+
+describe('parseOptionalSignedAmountToMinor', () => {
+	it('maps blank values to null and parses signed values', () => {
+		expect(parseOptionalSignedAmountToMinor('')).toBeNull();
+		expect(parseOptionalSignedAmountToMinor(null)).toBeNull();
+		expect(parseOptionalSignedAmountToMinor('-9.99')).toBe(-999);
+	});
+});
+
 describe('sumMinors', () => {
 	it('sums integer minor amounts exactly', () => {
 		expect(sumMinors([101, 202, 303])).toBe(606);
 		expect(sumMinors([])).toBe(0);
+	});
+});
+
+describe('includedTaxMinor', () => {
+	it('extracts tax from a tax-inclusive total and rounds to the nearest minor unit', () => {
+		expect(includedTaxMinor(1050, 5)).toBe(50);
+		expect(includedTaxMinor(100, 5)).toBe(5);
+		expect(includedTaxMinor(1130, 13)).toBe(130);
+	});
+});
+
+describe('addedTaxMinor', () => {
+	it('adds tax to a tax-exclusive subtotal and rounds to the nearest minor unit', () => {
+		expect(addedTaxMinor(1000, 5)).toBe(50);
+		expect(addedTaxMinor(100, 5)).toBe(5);
+		expect(addedTaxMinor(1000, 13)).toBe(130);
 	});
 });

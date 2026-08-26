@@ -109,7 +109,7 @@ Managed folder overrides are relative to `APP_DATA_ROOT`; startup rejects absolu
 
 ## Watched-Folder Intake
 
-Place supported PDF, JPG, JPEG, or PNG files beneath `data/inbox/`. A file must retain the same size and modification time for the configured stability interval before intake. The application then:
+Place supported PDF, JPG, JPEG, PNG, or ZIP files beneath `data/inbox/`. Folders are scanned recursively. A file must retain the same size and modification time for the configured stability interval before intake. Stable ZIP archives are expanded into collision-safe, flattened inbox files before those files enter the normal intake pipeline. The application then:
 
 1. Validates the extension and file signature.
 2. Calculates a SHA-256 content hash.
@@ -118,6 +118,8 @@ Place supported PDF, JPG, JPEG, or PNG files beneath `data/inbox/`. A file must 
 5. Atomically moves the file to a document-ID-based path beneath `data/processing/`.
 
 Filesystem events reduce latency, while periodic scans remain the source of truth. Interrupted running jobs return to the pending queue at startup. See `.env.example` for stability, scan, polling, and retry settings.
+
+ZIP extraction rejects encrypted, malformed, path-traversing, and special-file entries. Archives are limited to 100 MB, 1,000 entries, 200 MB total expanded content, the configured OCR file-size limit per document, and a 100:1 compression ratio. A valid archive is removed only after its supported files are published safely; rejected archives remain in the inbox for inspection.
 
 ## Receipt OCR
 
@@ -130,6 +132,11 @@ Contract tests use sanitized Taggun response fixtures and do not consume live pr
 Billable expenses are held in `processed/billable` when approved, regardless of the configured
 destination template, so they can be processed before month/year filing. The destination template
 continues to control non-billable receipts.
+
+Billable reviews can assign one or more clients to the whole expense, or assign clients to selected
+line items. Line-item assignment requires at least one assigned line for approval but does not
+require every line to have a client. Existing single-client expenses are migrated to the whole-expense
+assignment mode.
 
 ## AI Classification
 
