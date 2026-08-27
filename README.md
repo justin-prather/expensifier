@@ -73,13 +73,14 @@ Vitest is forced to run through Bun because the application uses the native `bun
 
 ## Docker Compose
 
-Create `.env` from `.env.example`, set the externally reachable `BETTER_AUTH_URL` and `ORIGIN`, then run:
+Create `.env` from `.env.example`, set the externally reachable `BETTER_AUTH_URL` and `ORIGIN`, then pull and start the latest stable image:
 
 ```sh
-docker compose up --build
+docker compose pull
+docker compose up -d
 ```
 
-The Compose configuration mounts `./data` at `/data`. For Unraid, this will become a bind mount to the selected app-data and document share.
+The public image is published as `ghcr.io/justin-prather/expensifier`. The Compose configuration mounts `./data` at `/data`. For Unraid, this will become a bind mount to the selected app-data and document share.
 
 The service exposes:
 
@@ -88,6 +89,18 @@ The service exposes:
 - Readiness: `http://localhost:3000/api/health/ready`
 
 `/api/health` remains a readiness alias. The image health check uses `/api/health/ready`.
+
+## Releases
+
+Expensifier uses Changesets to update `package.json`, maintain this repository's `CHANGELOG.md`, create Git tags and GitHub releases, and publish versioned container images to GHCR. Add a changeset with user-visible work:
+
+```sh
+bun run changeset
+```
+
+Committed changesets are collected into an automated `chore: version packages` pull request. Merging that pull request publishes the exact version, commit SHA, major, minor, and `latest` image tags. Prereleases publish only exact-version and commit tags and do not move stable tags. The package remains private to prevent npm publication; Changesets is configured to version and tag it for container releases.
+
+Repository administrators must enable **Allow GitHub Actions to create and approve pull requests** under Actions settings. GHCR creates the container package as private on its first publication; change the `expensifier` package visibility to public once so Unraid and Compose can pull it anonymously.
 
 ## Data Files
 

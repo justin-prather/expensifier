@@ -1,6 +1,6 @@
 {
 	"name": "expensifier",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"private": true,
 	"license": "MIT",
 	"type": "module",
@@ -15,7 +15,10 @@
 		"test:unit": "bun --bun node_modules/vitest/vitest.mjs",
 		"test": "bun run test:unit -- --run",
 		"lint": "oxfmt --check . && oxlint --deny-warnings .",
-		"format": "oxfmt --write ."
+		"format": "oxfmt --write .",
+		"changeset": "changeset",
+		"version-packages": "changeset version",
+		"release": "changeset publish"
 	},
 	"dependencies": {
 		"@effect/sql-sqlite-bun": "4.0.0-rc.111",
@@ -24,6 +27,7 @@
 		"yauzl": "3.4.0"
 	},
 	"devDependencies": {
+		"@changesets/cli": "3.0.1",
 		"@effect/vitest": "4.0.0-rc.111",
 		"@sveltejs/kit": "^2.63.0",
 		"@sveltejs/vite-plugin-svelte": "^7.1.2",

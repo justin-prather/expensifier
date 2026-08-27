@@ -1,8 +1,6 @@
 services:
   expensifier:
-    build:
-      context: .
-    image: expensifier:phase-four
+    image: ghcr.io/justin-prather/expensifier:latest
     container_name: expensifier
     restart: unless-stopped
     ports:

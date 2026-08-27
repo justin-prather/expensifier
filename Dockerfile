@@ -15,6 +15,10 @@ RUN bun run build
 FROM oven/bun:1.3.14-slim AS runtime
 WORKDIR /app
 
+LABEL org.opencontainers.image.source="https://github.com/justin-prather/expensifier"
+LABEL org.opencontainers.image.description="Self-hosted expense intake, classification, and review"
+LABEL org.opencontainers.image.licenses="MIT"
+
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 ENV PORT=3000
