@@ -1,3 +1,5 @@
+import { extname } from 'node:path';
+
 import {
 	formatMinor,
 	parseAmountToMinor,
@@ -583,17 +585,25 @@ export class ReviewService extends Context.Service<
 				}
 				const context = yield* requireReviewable(expenseId);
 				const sanitized = sanitizeFilenameValue(context.document.originalFilename);
-				const targetRelativePath = `rejected/${sanitized || `${expenseId}.${context.document.extension}`}`;
+				const filename = sanitized || `${expenseId}.${context.document.extension}`;
+				const extension = extname(filename);
+				const stem = extension ? filename.slice(0, -extension.length) : filename;
+				const existingSuffix = /^(.*) \((\d+)\)$/.exec(stem);
+				const base = existingSuffix ? existingSuffix[1] : stem;
+				let suffix = existingSuffix ? Number(existingSuffix[2]) : 0;
+				let targetRelativePath = `rejected/${filename}`;
 
-				if (
+				while (
 					targetRelativePath !== context.document.currentRelativePath &&
 					(yield* files.managedFileExists(targetRelativePath))
 				) {
-					return yield* Effect.fail(
-						new ReviewStateError({
-							message: `Destination already exists: ${targetRelativePath}`
-						})
-					);
+					suffix += 1;
+					const ending = ` (${suffix})${extension}`;
+					const fittedBase = Array.from(base);
+					while (new TextEncoder().encode(fittedBase.join('') + ending).length > 255) {
+						fittedBase.pop();
+					}
+					targetRelativePath = `rejected/${fittedBase.join('')}${ending}`;
 				}
 
 				yield* audit.append({

@@ -18,3 +18,7 @@ services:
       CLASSIFICATION_MAX_RESPONSE_BYTES: ${CLASSIFICATION_MAX_RESPONSE_BYTES:-1000000}
     volumes:
       - ${DOCKER_DATA_ROOT:-./data}:/data
+      - expensifier_app_data:/data/app
+
+volumes:
+  expensifier_app_data:

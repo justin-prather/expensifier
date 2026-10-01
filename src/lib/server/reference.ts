@@ -3,7 +3,7 @@ import { SqlClient } from 'effect/unstable/sql';
 
 import { AuditRepository } from './audit';
 import type { Actor } from './review';
-import { validateTemplate } from './templates';
+import { defaultDestinationTemplate, defaultFilenameTemplate, validateTemplate } from './templates';
 
 export const referenceKinds = ['payment_account', 'category', 'client'] as const;
 export type ReferenceKind = (typeof referenceKinds)[number];
@@ -323,10 +323,8 @@ export class ReferenceService extends Context.Service<
 				`;
 				const stored = new Map(rows.map((row) => [row.key, row.value]));
 				return {
-					filename:
-						stored.get('filename_template') ??
-						'{date} {vendor} {amount} {paymentAccount} {notes} {billable}.{extension}',
-					destination: stored.get('destination_template') ?? 'processed/{billableSubdir}'
+					filename: stored.get('filename_template') ?? defaultFilenameTemplate,
+					destination: stored.get('destination_template') ?? defaultDestinationTemplate
 				};
 			}).pipe(Effect.orDie);
 

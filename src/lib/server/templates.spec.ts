@@ -73,8 +73,28 @@ describe('renderFilename', () => {
 });
 
 describe('renderDestination', () => {
-	it('routes non-billable expenses to processed/', () => {
-		expect(renderDestination(defaultDestinationTemplate, baseValues)).toBe('processed');
+	it('routes non-billable expenses by receipt year and month', () => {
+		expect(renderDestination(defaultDestinationTemplate, baseValues)).toBe(
+			'processed/2026/08 August'
+		);
+	});
+
+	it.each([
+		['2026-10-15', 'processed/2026/10 October'],
+		['2026-01-31', 'processed/2026/01 January'],
+		['2025-12-31', 'processed/2025/12 December']
+	])('files receipt date %s into %s', (date, destination) => {
+		expect(renderDestination(defaultDestinationTemplate, { ...baseValues, date })).toBe(
+			destination
+		);
+	});
+
+	it('allows previews before a valid receipt date is entered', () => {
+		for (const date of ['', '2026-13-01', '2026-1-01']) {
+			expect(renderDestination(defaultDestinationTemplate, { ...baseValues, date })).toBe(
+				'processed'
+			);
+		}
 	});
 
 	it('routes billable expenses to processed/billable', () => {

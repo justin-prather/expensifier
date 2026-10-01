@@ -9,6 +9,9 @@
 
 	const tokens = [
 		'{date}',
+		'{year}',
+		'{month}',
+		'{monthName}',
 		'{vendor}',
 		'{amount}',
 		'{currency}',
@@ -75,8 +78,10 @@
 					class="mt-2 w-full border-2 border-ink bg-paper px-4 py-3 font-mono text-sm"
 				/>
 				<span class="mt-2 block text-xs leading-5 text-ink/60">
-					Billable expenses always go to <code>processed/billable</code> first; this template controls
-					non-billable filing.
+					Billable expenses always go to <code>processed/billable</code> first; this template
+					controls non-billable filing. Date tokens use the receipt date, with
+					<code>{'{month}'}</code>
+					producing a two-digit month and <code>{'{monthName}'}</code> its English name.
 				</span>
 			</label>
 			<button

@@ -3,10 +3,28 @@ import { SqlClient } from 'effect/unstable/sql';
 
 export const defaultFilenameTemplate =
 	'{date} {vendor} {amount} {paymentAccount} {notes} {billable}.{extension}';
-export const defaultDestinationTemplate = 'processed/{billableSubdir}';
+export const defaultDestinationTemplate = 'processed/{year}/{month} {monthName}';
+
+const monthNames = [
+	'January',
+	'February',
+	'March',
+	'April',
+	'May',
+	'June',
+	'July',
+	'August',
+	'September',
+	'October',
+	'November',
+	'December'
+];
 
 const knownTokens = new Set([
 	'date',
+	'year',
+	'month',
+	'monthName',
 	'vendor',
 	'amount',
 	'currency',
@@ -69,6 +87,15 @@ function renderTokens(template: string, values: TemplateValues): string {
 		switch (token) {
 			case 'date':
 				return values.date;
+			case 'year':
+			case 'month':
+			case 'monthName': {
+				const date = /^(\d{4})-(0[1-9]|1[0-2])-\d{2}$/.exec(values.date);
+				if (!date) return '';
+				if (token === 'year') return date[1];
+				if (token === 'month') return date[2];
+				return monthNames[Number(date[2]) - 1];
+			}
 			case 'vendor':
 				return values.vendor;
 			case 'amount':

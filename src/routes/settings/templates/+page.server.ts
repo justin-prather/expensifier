@@ -15,7 +15,7 @@ const sampleValues = {
 	currency: 'CAD',
 	paymentAccount: '0740-CIBC-USD-VISA',
 	notes: 'Shelving brackets',
-	billable: true,
+	billable: false,
 	client: 'Acme Corp',
 	extension: 'pdf',
 	expenseId: '00000000-0000-0000-0000-000000000000'

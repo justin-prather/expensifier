@@ -1,6 +1,14 @@
-import { existsSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	writeFileSync
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { describe, expect, it } from '@effect/vitest';
 import { Effect, Layer, Result } from 'effect';
@@ -95,14 +103,14 @@ function draftInput(overrides: Partial<ExpenseDraftInput> = {}): ExpenseDraftInp
 	};
 }
 
-const intakeOneReceipt = (inboxPath: string) =>
+const intakeOneReceipt = (inboxPath: string, filename = 'receipt.pdf') =>
 	Effect.gen(function* () {
 		const intake = yield* IntakeService;
 		const jobs = yield* JobService;
 		const documents = yield* DocumentRepository;
 		const expenses = yield* ExpenseRepository;
 
-		writeFileSync(join(inboxPath, 'receipt.pdf'), pdfFixture);
+		writeFileSync(join(inboxPath, filename), pdfFixture);
 		yield* intake.reconcile;
 		yield* jobs.processAvailable;
 
@@ -118,6 +126,48 @@ const intakeOneReceipt = (inboxPath: string) =>
 	});
 
 describe('review flows', () => {
+	it.live('increments rejected filenames without overwriting existing files', () => {
+		const { config, layer } = makeReviewLayer();
+		return Effect.gen(function* () {
+			const review = yield* ReviewService;
+			const expenses = yield* ExpenseRepository;
+			const documents = yield* DocumentRepository;
+			const audit = yield* AuditRepository;
+			const intake = yield* intakeOneReceipt(config.directories.inbox);
+			for (const name of ['receipt.pdf', 'receipt (1).pdf', 'receipt (2).pdf']) {
+				writeFileSync(join(config.directories.rejected, name), `existing ${name}`);
+			}
+
+			const targetPath = yield* review.reject(intake.expenseId, 'Duplicate receipt', actor);
+			expect(targetPath).toBe('rejected/receipt (3).pdf');
+			expect(readFileSync(join(config.dataRoot, targetPath), 'utf8')).toBe(pdfFixture);
+			for (const name of ['receipt.pdf', 'receipt (1).pdf', 'receipt (2).pdf']) {
+				expect(readFileSync(join(config.directories.rejected, name), 'utf8')).toBe(
+					`existing ${name}`
+				);
+			}
+			expect((yield* expenses.findById(intake.expenseId))?.status).toBe('rejected');
+			expect((yield* documents.findById(intake.documentId))?.currentRelativePath).toBe(targetPath);
+			const entries = yield* audit.listForEntity('expense', intake.expenseId);
+			expect(entries.some((entry) => entry.action === 'rejected')).toBe(true);
+		}).pipe(Effect.provide(layer));
+	});
+
+	it.live('continues an existing numeric suffix when the original filename conflicts', () => {
+		const { config, layer } = makeReviewLayer();
+		return Effect.gen(function* () {
+			const review = yield* ReviewService;
+			const intake = yield* intakeOneReceipt(config.directories.inbox, 'receipt (4).pdf');
+			writeFileSync(join(config.directories.rejected, 'receipt (4).pdf'), 'existing receipt');
+			const targetPath = yield* review.reject(intake.expenseId, 'Duplicate receipt', actor);
+			expect(targetPath).toBe('rejected/receipt (5).pdf');
+			expect(readFileSync(join(config.dataRoot, targetPath), 'utf8')).toBe(pdfFixture);
+			expect(readFileSync(join(config.directories.rejected, 'receipt (4).pdf'), 'utf8')).toBe(
+				'existing receipt'
+			);
+		}).pipe(Effect.provide(layer));
+	});
+
 	it.live('flags missing and malformed fields when validating a strict draft', () => {
 		const { config, layer } = makeReviewLayer();
 		return Effect.gen(function* () {
@@ -195,7 +245,7 @@ describe('review flows', () => {
 			);
 
 			expect(targetPath).toBe(
-				`processed/2026-08-19 Fixture Merchant 23.45 ${accountName} team lunch.pdf`
+				`processed/2026/08 August/2026-08-19 Fixture Merchant 23.45 ${accountName} team lunch.pdf`
 			);
 			expect(existsSync(join(config.dataRoot, targetPath))).toBe(true);
 
@@ -550,12 +600,13 @@ describe('review flows', () => {
 
 			const refs = yield* expenses.referenceData;
 			const accountName = refs.paymentAccounts[0]!.name;
-			const targetRelativePath = `processed/2026-08-19 Fixture Merchant 23.45 ${accountName} team lunch.pdf`;
+			const targetRelativePath = `processed/2026/08 August/2026-08-19 Fixture Merchant 23.45 ${accountName} team lunch.pdf`;
 			yield* expenses.recordMoveIntent(intake.expenseId, {
 				kind: 'approve',
 				targetRelativePath
 			});
 
+			mkdirSync(dirname(join(config.dataRoot, targetRelativePath)), { recursive: true });
 			renameSync(
 				join(config.dataRoot, document!.currentRelativePath),
 				join(config.dataRoot, targetRelativePath)

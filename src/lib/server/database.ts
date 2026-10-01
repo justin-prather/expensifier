@@ -3,6 +3,7 @@ import { Effect, Layer } from 'effect';
 import { SqlClient } from 'effect/unstable/sql';
 
 import { appDatabasePath, ensureDatabaseDirectory, runtimeConfig } from './config';
+import { defaultDestinationTemplate } from './templates';
 
 const migrations = SqliteMigrator.fromRecord({
 	'0001_create_jobs': Effect.gen(function* () {
@@ -339,6 +340,14 @@ const migrations = SqliteMigrator.fromRecord({
 		`;
 		yield* sql`ALTER TABLE expense_line_items ADD COLUMN client_id TEXT REFERENCES clients(id)`;
 		yield* sql`CREATE INDEX expense_line_items_client ON expense_line_items (client_id, expense_id)`;
+	}),
+	'0009_date_based_receipt_filing': Effect.gen(function* () {
+		const sql = yield* SqlClient.SqlClient;
+		yield* sql`
+			UPDATE app_settings
+			SET value = ${defaultDestinationTemplate}, updated_at = ${new Date().toISOString()}
+			WHERE key = 'destination_template' AND value IN ('processed/{billableSubdir}', 'processed')
+		`;
 	})
 });
 
