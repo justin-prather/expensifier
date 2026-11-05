@@ -154,17 +154,49 @@ assignment mode.
 ## AI Classification
 
 After successful OCR, a durable classification job first checks active deterministic vendor rules.
-Only unmatched expenses invoke DeepSeek V4 Flash through OpenCode Zen's OpenAI-compatible Chat
+Only unmatched expenses invoke DeepSeek V4.1 Flash through OpenCode Zen's OpenAI-compatible Chat
 Completions endpoint. The provider receives a new allow-listed object containing normalized OCR
 values/confidence and active payment-account, category, and client candidates; it never receives the
 document, filename, path, raw OCR response, or OCR source paths. JSON output is validated locally
 against the required shape and supplied candidate IDs before a suggestion is stored.
 
-Set `CLASSIFICATION_API_KEY` to an OpenCode Zen API key to enable the production Layer. Missing credentials or provider failures
+Set `CLASSIFICATION_API_KEY` to a current OpenCode Console API key to enable the production Layer. Missing credentials or provider failures
 do not change local expense status or block manual review. Admins can inspect non-secret provider
 status at `/settings/integrations`; suggestions and explicit accepted, rejected, or replaced outcomes
 are retained in SQLite and audit history. See `docs/ai-provider-decision.md` for the candidate
 comparison, fixture method, selected model, and privacy boundary.
+
+The default model is `deepseek-v4.1-flash`. The default endpoint is
+`https://opencode.ai/inference/openai/v1/chat/completions` (pay-as-you-go, not Go).
+The endpoint remains configurable through `CLASSIFICATION_ENDPOINT`.
+Expired keys require a new Console key, not another sign-in.
+
+### Private classification policy
+
+The shared prompt contains no deployment-specific account names, client aliases, or billing associations.
+`CLASSIFICATION_POLICY` adds private preferences at runtime. It does not train the model or learn from future approvals.
+The provider receives this policy with each classification request, alongside normalized receipt data and candidate names.
+
+To configure private preferences:
+
+1. Set `CLASSIFICATION_POLICY` in your local `.env` file.
+2. Keep account names, client aliases, and billing rules out of source files and test fixtures.
+3. Do not put credentials or API keys in the policy.
+4. Restart the container after you change the policy.
+
+Git and Docker exclude `.env` files and the `data/` folder. The policy is not part of the published image.
+Deployment operators can inspect container environment variables. Treat this policy as private configuration, not encrypted storage.
+
+### Local container builds
+
+To run local source changes without publishing an image:
+
+```sh
+docker compose -f compose.yaml -f compose.local.yaml up -d --build
+```
+
+The local override uses `expensifier:local` and preserves the existing data mounts.
+The default `compose.yaml` continues to use the published GHCR image.
 
 ## Effect Version
 

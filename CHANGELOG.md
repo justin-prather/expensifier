@@ -1,5 +1,13 @@
 # expensifier
 
+## 0.1.2
+
+### Patch Changes
+
+- Remove deployment-specific account labels from new-installation seed data and template examples. Existing saved accounts remain unchanged.
+
+- Refine receipt classification with specific categories, independent billable decisions, and shared-client safeguards. Keep deployment-specific preferences in optional runtime configuration instead of the shared prompt or container image. Update the OpenCode endpoint and model, explain expired API keys, and add a local-only container build override.
+
 ## 0.1.1
 
 ### Patch Changes

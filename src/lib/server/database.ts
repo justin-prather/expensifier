@@ -222,23 +222,7 @@ const migrations = SqliteMigrator.fromRecord({
 		`;
 
 		const now = new Date().toISOString();
-		const accounts = [
-			'11190-WISE-USD',
-			'11200-WISE-EUR',
-			'8113-CIBC-USD',
-			'11180-WISE-CAD',
-			'0740-CIBC-USD-VISA',
-			'1408-CIBC-CAD-OWNER-COMP',
-			'1300-CIBC-CAD-PROFIT',
-			'9211-CIBC-CAD-OPEX',
-			'6442-CIBC-CAD-VISA'
-		];
-		for (const name of accounts) {
-			yield* sql`
-				INSERT INTO payment_accounts (id, name, active, created_at)
-				VALUES (${crypto.randomUUID()}, ${name}, 1, ${now})
-			`;
-		}
+		// Account and client names are deployment data, never shared seed data.
 		const categories = [
 			'Meals & Entertainment',
 			'Office Supplies',

@@ -20,6 +20,14 @@ function makeLayer() {
 }
 
 describe('reference data management', () => {
+	it.live('starts new installations without deployment-specific accounts or clients', () => {
+		return Effect.gen(function* () {
+			const refs = yield* ReferenceService;
+			expect(yield* refs.list('payment_account')).toEqual([]);
+			expect(yield* refs.list('client')).toEqual([]);
+		}).pipe(Effect.provide(makeLayer()));
+	});
+
 	it.live('creates, renames, and lists reference records with usage flags', () => {
 		const layer = makeLayer();
 		return Effect.gen(function* () {

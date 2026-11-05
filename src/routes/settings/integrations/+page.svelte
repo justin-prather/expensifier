@@ -69,7 +69,7 @@
 				</li>
 			</ul>
 			<a
-				href="https://opencode.ai/docs/zen/"
+				href="https://opencode.ai/v2/docs/console/models/"
 				class="mt-6 inline-block font-mono text-xs font-bold text-forest uppercase hover:text-coral"
 				>Provider API reference →</a
 			>

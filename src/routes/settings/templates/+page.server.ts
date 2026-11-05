@@ -13,7 +13,7 @@ const sampleValues = {
 	vendor: 'Home Depot',
 	amount: '148.27',
 	currency: 'CAD',
-	paymentAccount: '0740-CIBC-USD-VISA',
+	paymentAccount: 'Example CAD Card',
 	notes: 'Shelving brackets',
 	billable: false,
 	client: 'Acme Corp',

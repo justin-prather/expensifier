@@ -12,6 +12,7 @@ import { dirname, join } from 'node:path';
 
 import { describe, expect, it } from '@effect/vitest';
 import { Effect, Layer, Result } from 'effect';
+import { SqlClient } from 'effect/unstable/sql';
 import { afterEach } from 'vitest';
 
 import { ApprovalIntegrationService } from './approval-integration';
@@ -48,6 +49,15 @@ function makeReviewLayer() {
 		JOB_POLL_INTERVAL_MILLISECONDS: '60000'
 	});
 	ensureManagedDirectories(config);
+	const databaseWithFixture = Layer.effectDiscard(
+		Effect.gen(function* () {
+			const sql = yield* SqlClient.SqlClient;
+			yield* sql`
+				INSERT INTO payment_accounts (id, name, active, created_at)
+				VALUES ('fixture-account', 'Fixture Card', 1, '2026-08-19T00:00:00.000Z')
+			`;
+		})
+	).pipe(Layer.provideMerge(makeDatabaseLayer(':memory:')));
 	const persistence = Layer.mergeAll(
 		JobRepository.layerWithoutDependencies,
 		DocumentRepository.layerWithoutDependencies,
@@ -55,7 +65,7 @@ function makeReviewLayer() {
 		ExpenseRepository.layerWithoutDependencies,
 		AuditRepository.layerWithoutDependencies,
 		TemplateService.layerWithoutDependencies
-	).pipe(Layer.provideMerge(makeDatabaseLayer(':memory:')));
+	).pipe(Layer.provideMerge(databaseWithFixture));
 	const classificationPersistence = Layer.merge(
 		ClassificationRepository.layerWithoutDependencies,
 		VendorRuleService.layerWithoutDependencies

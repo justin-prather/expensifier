@@ -350,19 +350,11 @@ SQLite stores:
 
 Reference records should be deactivated rather than deleted when historical expenses use them.
 
-The legacy payment-account list is imported as an editable initial seed:
+New installations start without payment accounts or clients. Administrators configure these records manually in Settings.
+Shared source, fixtures, and images contain no deployment-specific account or client names.
+Existing installations keep their saved reference records.
 
-- `11190-WISE-USD`.
-- `11200-WISE-EUR`.
-- `8113-CIBC-USD`.
-- `11180-WISE-CAD`.
-- `0740-CIBC-USD-VISA`.
-- `1408-CIBC-CAD-OWNER-COMP`.
-- `1300-CIBC-CAD-PROFIT`.
-- `9211-CIBC-CAD-OPEX`.
-- `6442-CIBC-CAD-VISA`.
-
-Categories and clients are configured manually in Settings.
+Categories are configured manually in Settings after the initial generic seed.
 
 ### 9.7 Jobs
 

@@ -1,5 +1,6 @@
 import { Context, Effect, Layer, Schema } from 'effect';
 
+import { buildClassificationInstructions } from './classification-prompt';
 import { runtimeConfig, type RuntimeConfig } from './config';
 
 export interface ClassificationField {
@@ -257,7 +258,8 @@ export class ClassificationService extends Context.Service<
 								method: 'POST',
 								headers: {
 									Authorization: `Bearer ${config.classificationApiKey}`,
-									'Content-Type': 'application/json'
+									'Content-Type': 'application/json',
+									'User-Agent': 'Expensifier'
 								},
 								body: JSON.stringify({
 									model: config.classificationModel,
@@ -265,7 +267,7 @@ export class ClassificationService extends Context.Service<
 										{
 											role: 'system',
 											content:
-												'Classify the structured receipt fields using only supplied candidate IDs. Return null for nullable fields when evidence is insufficient. Never invent an ID. Return only JSON matching this schema: ' +
+												buildClassificationInstructions(config.classificationPolicy) +
 												JSON.stringify(responseSchema)
 										},
 										{ role: 'user', content: JSON.stringify(request) }
@@ -296,11 +298,22 @@ export class ClassificationService extends Context.Service<
 							})
 					});
 					if (!response.ok) {
+						// Map known errors to local text; never persist arbitrary provider response data.
+						let providerError: Record<string, unknown> = {};
+						try {
+							providerError = record(record(JSON.parse(responseText)).error);
+						} catch {
+							// Non-JSON errors use the status-only summary below.
+						}
+						const summary =
+							providerError.code === 'api_key_expired'
+								? 'Classification API key has expired. Create a new key in OpenCode Console and replace CLASSIFICATION_API_KEY.'
+								: `Classification provider rejected the request with status ${response.status}`;
 						const retryable =
 							response.status === 408 || response.status === 429 || response.status >= 500;
 						return yield* new ClassificationError({
 							code: response.status === 429 ? 'rate_limited' : 'provider_rejected',
-							summary: `Classification provider rejected the request with status ${response.status}`,
+							summary,
 							retryable
 						});
 					}

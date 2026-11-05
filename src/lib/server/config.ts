@@ -29,6 +29,7 @@ export interface RuntimeConfig {
 	readonly classificationApiKey: string | null;
 	readonly classificationEndpoint: string;
 	readonly classificationModel: string;
+	readonly classificationPolicy: string | null;
 	readonly classificationTimeoutMilliseconds: number;
 	readonly classificationMaxResponseBytes: number;
 }
@@ -198,10 +199,12 @@ function parseRuntimeConfig(
 		),
 		classificationApiKey: environment.CLASSIFICATION_API_KEY?.trim() || null,
 		classificationEndpoint: validHttpsUrl(
-			environment.CLASSIFICATION_ENDPOINT ?? 'https://opencode.ai/zen/v1/chat/completions',
+			environment.CLASSIFICATION_ENDPOINT ??
+				'https://opencode.ai/inference/openai/v1/chat/completions',
 			'CLASSIFICATION_ENDPOINT'
 		),
-		classificationModel: environment.CLASSIFICATION_MODEL?.trim() || 'deepseek-v4-flash',
+		classificationModel: environment.CLASSIFICATION_MODEL?.trim() || 'deepseek-v4.1-flash',
+		classificationPolicy: environment.CLASSIFICATION_POLICY?.trim() || null,
 		classificationTimeoutMilliseconds: integerSetting(
 			environment.CLASSIFICATION_TIMEOUT_MILLISECONDS,
 			20_000,

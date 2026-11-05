@@ -50,10 +50,20 @@ describe('runtime configuration', () => {
 	it('keeps classification credentials optional and requires a secure provider endpoint', () => {
 		const config = loadRuntimeConfig({});
 		expect(config.classificationApiKey).toBeNull();
-		expect(config.classificationEndpoint).toBe('https://opencode.ai/zen/v1/chat/completions');
-		expect(config.classificationModel).toBe('deepseek-v4-flash');
+		expect(config.classificationPolicy).toBeNull();
+		expect(config.classificationEndpoint).toBe(
+			'https://opencode.ai/inference/openai/v1/chat/completions'
+		);
+		expect(config.classificationModel).toBe('deepseek-v4.1-flash');
 		expect(() =>
 			loadRuntimeConfig({ CLASSIFICATION_ENDPOINT: 'http://classification.example.test/v1' })
 		).toThrow('CLASSIFICATION_ENDPOINT must use https');
+	});
+
+	it('reads private classification policy only from runtime configuration', () => {
+		expect(
+			loadRuntimeConfig({ CLASSIFICATION_POLICY: '  Fixture policy  ' }).classificationPolicy
+		).toBe('Fixture policy');
+		expect(loadRuntimeConfig({ CLASSIFICATION_POLICY: '  ' }).classificationPolicy).toBeNull();
 	});
 });

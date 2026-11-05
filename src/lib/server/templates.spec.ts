@@ -16,7 +16,7 @@ const baseValues: TemplateValues = {
 	vendor: 'Home Depot',
 	amount: '123.45',
 	currency: 'CAD',
-	paymentAccount: '11190-WISE-USD',
+	paymentAccount: 'EXAMPLE-USD',
 	notes: 'shelving',
 	billable: false,
 	client: '',
@@ -27,13 +27,13 @@ const baseValues: TemplateValues = {
 describe('renderFilename', () => {
 	it('renders the default template like the legacy convention', () => {
 		expect(renderFilename(defaultFilenameTemplate, baseValues)).toBe(
-			'2026-08-19 Home Depot 123.45 11190-WISE-USD shelving.pdf'
+			'2026-08-19 Home Depot 123.45 EXAMPLE-USD shelving.pdf'
 		);
 	});
 
 	it('appends the billable marker for billable expenses', () => {
 		const filename = renderFilename(defaultFilenameTemplate, { ...baseValues, billable: true });
-		expect(filename).toBe('2026-08-19 Home Depot 123.45 11190-WISE-USD shelving billable.pdf');
+		expect(filename).toBe('2026-08-19 Home Depot 123.45 EXAMPLE-USD shelving billable.pdf');
 	});
 
 	it('sanitizes filesystem-hostile characters', () => {

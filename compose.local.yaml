@@ -1,0 +1,6 @@
+services:
+  expensifier:
+    image: expensifier:local
+    pull_policy: never
+    build:
+      context: .
